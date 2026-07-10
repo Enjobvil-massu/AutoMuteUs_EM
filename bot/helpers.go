@@ -45,17 +45,16 @@ func formCaptureURL(url, connectCode string) (hyperlink, apiHyperlink, minimalUR
 			protocol = "https://"
 		}
 
-		hostAPI := os.Getenv("API_SERVER_URL")
-		if hostAPI == "" {
-			hostAPI = "http://localhost"
-		}
+		hostAPI := strings.TrimRight(strings.TrimSpace(os.Getenv("API_SERVER_URL")), "/")
 
 		hyperlink = fmt.Sprintf("aucapture://%s%s/%s%s", host, port, connectCode, insecure)
-		apiHyperlink = fmt.Sprintf("%s/open/link?connectCode=%s", hostAPI, connectCode)
+		if strings.HasPrefix(hostAPI, "https://") || strings.HasPrefix(hostAPI, "http://") {
+			apiHyperlink = fmt.Sprintf("%s/open/link?connectCode=%s", hostAPI, connectCode)
+		}
 		minimalURL = fmt.Sprintf("%s%s%s", protocol, host, port)
 	} else {
 		hyperlink = "Invalid HOST provided (should resemble something like `http://localhost:8123`)"
-		apiHyperlink = "Invalid API Link"
+		apiHyperlink = ""
 		minimalURL = "Invalid HOST provided"
 	}
 	return

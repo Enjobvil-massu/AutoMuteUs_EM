@@ -45,15 +45,13 @@ type registeredCommand struct {
 	ApplicationCommand *discordgo.ApplicationCommand
 }
 
-// ===== スラッシュコマンド有効・無効設定 =====
-// true = 有効（表示する）
-// false = 無効（完全に削除する）
-// コマンド名はログの「Registering command X」の X を書きます。
+// true: Discordへ登録する / false: 登録せず、既存登録があれば削除する。
+// 表示・操作方法を変えないため、現在利用しているコマンドだけを明示します。
 var EnabledSlashCommands = map[string]bool{
 	"help":     true,
-	"new":      true,  // 開始コマンド（/new）
-	"refresh":  false, // 今回は使わない
-	"pause":    false, // 今回は使わない
+	"start":    true,
+	"refresh":  false,
+	"pause":    false,
 	"stop":     true,
 	"link":     true,
 	"unlink":   true,
@@ -61,86 +59,78 @@ var EnabledSlashCommands = map[string]bool{
 	"privacy":  false,
 	"info":     false,
 	"map":      false,
-	// ↓ たぶん不要そうなものはデフォルトで off
 	"stats":    false,
 	"premium":  false,
 	"debug":    false,
 	"download": false,
 }
 
-// マップに載っていないコマンド名は「デフォルトで true（有効）」扱いにします。
 func isSlashCommandEnabled(name string) bool {
-	if enabled, ok := EnabledSlashCommands[name]; ok {
-		return enabled
-	}
-	return true
+	enabled, ok := EnabledSlashCommands[name]
+	return ok && enabled
 }
 
 func main() {
-	// seed the rand generator (used for making connection codes)
+	// connect code generation用の乱数を初期化します。
 	rand.Seed(time.Now().Unix())
-	err := discordMainWrapper()
-	if err != nil {
+
+	if err := discordMainWrapper(); err != nil {
 		log.Println("Program exited with the following error:")
 		log.Println(err)
-		return
 	}
 }
 
 func discordMainWrapper() error {
-	var isOfficial = os.Getenv("AUTOMUTEUS_OFFICIAL") != ""
-
+	isOfficial := os.Getenv("AUTOMUTEUS_OFFICIAL") != ""
 	discordToken := os.Getenv("DISCORD_BOT_TOKEN")
 	if discordToken == "" {
 		return errors.New("no DISCORD_BOT_TOKEN provided")
 	}
+
 	logPath := os.Getenv("LOG_PATH")
 	if logPath == "" {
 		logPath = "./"
 	}
-
-	logEntry := os.Getenv("DISABLE_LOG_FILE")
-	if logEntry == "" {
-		file, err := os.Create(path.Join(logPath, "logs.txt"))
-		if err != nil {
-			return err
+	if os.Getenv("DISABLE_LOG_FILE") == "" {
+		if err := os.MkdirAll(logPath, 0o755); err != nil {
+			return fmt.Errorf("create log directory: %w", err)
 		}
-		mw := io.MultiWriter(os.Stdout, file)
-		log.SetOutput(mw)
+		file, err := os.OpenFile(path.Join(logPath, "logs.txt"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("open log file: %w", err)
+		}
+		defer func() {
+			if err := file.Close(); err != nil {
+				log.Printf("close log file: %v", err)
+			}
+		}()
+		log.SetOutput(io.MultiWriter(os.Stdout, file))
 	}
 
-	// ===== ここから JST 固定処理 =====
-	// UTC+9 (JST) の固定タイムゾーンを作成
+	// コンテナ内のログ時刻をJSTへ固定します。
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
-	// Go ランタイム全体の「ローカルタイム」を JST に変更
 	time.Local = jst
-	// 確認用ログ（起動時に一度だけ）
 	log.Println("Init: time.Local forced to Asia/Tokyo (UTC+9)")
-	// ===== JST 固定処理ここまで =====
 
 	emojiGuildID := os.Getenv("EMOJI_GUILD_ID")
-
 	log.Println(version + "-" + commit)
 
-	numShardsStr := os.Getenv("NUM_SHARDS")
-	numShards, err := strconv.Atoi(numShardsStr)
+	numShards, err := strconv.Atoi(os.Getenv("NUM_SHARDS"))
 	if err != nil {
 		log.Println("No NUM_SHARDS specified; defaulting to 1")
 		numShards = 1
 	}
-
-	shardIDStr := os.Getenv("SHARD_ID")
-	if shardIDStr != "" {
+	if os.Getenv("SHARD_ID") != "" {
 		return errors.New("SHARD_ID is no longer supported! Please use SHARDS instead")
 	}
 
-	var shards shards
+	var shardList shards
 	shardsStr := os.Getenv("SHARDS")
 	if shardsStr == "" {
 		log.Println("No SHARDS specified, defaulting to 0")
-		shards = defaultShard()
+		shardList = defaultShard()
 	} else {
-		shards, err = parseShards(shardsStr, numShards)
+		shardList, err = parseShards(shardsStr, numShards)
 		if err != nil {
 			return err
 		}
@@ -154,31 +144,26 @@ func discordMainWrapper() error {
 
 	var redisClient bot.RedisInterface
 	var storageInterface storage.StorageInterface
-
 	redisAddr := os.Getenv("REDIS_ADDR")
 	redisPassword := os.Getenv("REDIS_PASS")
-	if redisAddr != "" {
-		err := redisClient.Init(storage.RedisParameters{
-			Addr:     redisAddr,
-			Username: "",
-			Password: redisPassword,
-		})
-		if err != nil {
-			log.Println(err)
-		}
-		err = storageInterface.Init(storage.RedisParameters{
-			Addr:     redisAddr,
-			Username: "",
-			Password: redisPassword,
-		})
-		if err != nil {
-			log.Println(err)
-		}
-	} else {
+	if redisAddr == "" {
 		return errors.New("no REDIS_ADDR specified; exiting")
 	}
+	if err := redisClient.Init(storage.RedisParameters{
+		Addr:     redisAddr,
+		Username: "",
+		Password: redisPassword,
+	}); err != nil {
+		return fmt.Errorf("redis init failed: %w", err)
+	}
+	if err := storageInterface.Init(storage.RedisParameters{
+		Addr:     redisAddr,
+		Username: "",
+		Password: redisPassword,
+	}); err != nil {
+		return fmt.Errorf("redis storage init failed: %w", err)
+	}
 
-	// BOT_LANG / LOCALE_PATH を環境変数から読む
 	locale.InitLang(os.Getenv("LOCALE_PATH"), os.Getenv("BOT_LANG"))
 
 	psql := storage2.PsqlInterface{}
@@ -186,53 +171,41 @@ func discordMainWrapper() error {
 	if pAddr == "" {
 		return errors.New("no POSTGRES_ADDR specified; exiting")
 	}
-
 	pUser := os.Getenv("POSTGRES_USER")
 	if pUser == "" {
 		return errors.New("no POSTGRES_USER specified; exiting")
 	}
-
 	pPass := os.Getenv("POSTGRES_PASS")
 	if pPass == "" {
 		return errors.New("no POSTGRES_PASS specified; exiting")
 	}
-
-	err = psql.Init(storage2.ConstructPsqlConnectURL(pAddr, pUser, pPass))
-	if err != nil {
-		return err
+	if err := psql.Init(storage2.ConstructPsqlConnectURL(pAddr, pUser, pPass)); err != nil {
+		return fmt.Errorf("postgres init failed: %w", err)
 	}
 
+	// DB準備が終わる前にDiscordコマンドを受け付けないよう、同期実行します。
 	if !isOfficial {
-		go func() {
-			err := psql.ExecFromString(postgresFileContents)
-			if err != nil {
-				log.Println("Exiting with fatal error when attempting to execute postgres.sql:")
-				log.Fatal(err)
-			}
-		}()
+		if err := psql.ExecFromString(postgresFileContents); err != nil {
+			return fmt.Errorf("execute postgres.sql: %w", err)
+		}
 	}
 
-	log.Println("Bot is now running.  Press CTRL-C to exit.")
+	log.Println("Bot is starting. Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	defer signal.Stop(sc)
 
 	go server.StartHealthCheckServer("8080")
 
 	topGGToken := os.Getenv("TOP_GG_TOKEN")
-
 	taskTimeoutms := capture.DefaultCaptureBotTimeout
-
-	taskTimeoutmsStr := os.Getenv("ACK_TIMEOUT_MS")
-	num, err := strconv.ParseInt(taskTimeoutmsStr, 10, 64)
-	if err == nil {
+	if num, parseErr := strconv.ParseInt(os.Getenv("ACK_TIMEOUT_MS"), 10, 64); parseErr == nil {
 		log.Printf("Read from env; using ACK_TIMEOUT_MS=%d\n", num)
 		taskTimeoutms = time.Millisecond * time.Duration(num)
 	}
 
-	maxReq5Sec := os.Getenv("MAX_REQ_5_SEC")
 	maxReq := DefaultMaxRequests5Sec
-	num, err = strconv.ParseInt(maxReq5Sec, 10, 64)
-	if err == nil {
+	if num, parseErr := strconv.ParseInt(os.Getenv("MAX_REQ_5_SEC"), 10, 64); parseErr == nil {
 		maxReq = num
 	}
 
@@ -243,127 +216,149 @@ func discordMainWrapper() error {
 		extraTokens = strings.Split(extraTokenStr, ",")
 	}
 
-	bots := make([]*bot.Bot, len(shards))
-	for i, shard := range shards {
-		bots[i] = bot.MakeAndStartBot(version, commit, discordToken, topGGToken, url, emojiGuildID, numShards, int(shard), &redisClient, &storageInterface, &psql, logPath)
+	bots := make([]*bot.Bot, len(shardList))
+	for i, shard := range shardList {
+		bots[i] = bot.MakeAndStartBot(
+			version,
+			commit,
+			discordToken,
+			topGGToken,
+			url,
+			emojiGuildID,
+			numShards,
+			int(shard),
+			&redisClient,
+			&storageInterface,
+			&psql,
+			logPath,
+		)
 		if bots[i] == nil {
-			log.Fatalf("bot %d failed to initialize; did you provide a valid Discord Bot Token?", shard)
+			for _, startedBot := range bots[:i] {
+				if startedBot != nil {
+					startedBot.Close()
+				}
+			}
+			return fmt.Errorf("bot %d failed to initialize; check the Discord bot token and Discord connection", shard)
 		}
 	}
 
-	// initialize the token provider using the first shard's redis client and primary session
 	bots[0].InitTokenProvider(tokenProvider)
-	for i := 0; i < len(shards); i++ {
+	for i := range shardList {
 		bots[i].TokenProvider = tokenProvider
 	}
 	tokenProvider.PopulateAndStartSessions(extraTokens)
-	// indicate to Kubernetes that we're ready to start receiving traffic
-	server.GlobalReady = true
+	defer func() {
+		for _, runningBot := range bots {
+			if runningBot != nil {
+				runningBot.Close()
+			}
+		}
+		tokenProvider.Close()
+	}()
 
 	go bots[0].StartMetricsServer(os.Getenv("SCW_NODE_ID"))
-
 	go bots[0].StartAPIServer("5000")
 
-	// empty string entry = global
-	slashCommandGuildIds := []string{""}
-	slashCommandGuildIdStr := strings.ReplaceAll(os.Getenv("SLASH_COMMAND_GUILD_IDS"), " ", "")
-	if slashCommandGuildIdStr != "" {
-		slashCommandGuildIds = strings.Split(slashCommandGuildIdStr, ",")
+	if strings.TrimSpace(os.Getenv("API_SERVER_URL")) == "" {
+		log.Println("[WARN] API_SERVER_URL is empty. /start will keep the host/code copy display, but the Capture launch link will be hidden.")
 	}
 
-	// only register commands if we're not the official bot, OR we're the primary/main shard
-	var registeredCommands []registeredCommand
-	if !isOfficial || shards.isPrimaryShard() {
-		for _, guild := range slashCommandGuildIds {
+	// empty string entry = global commands
+	slashCommandGuildIDs := []string{""}
+	slashCommandGuildIDStr := strings.ReplaceAll(os.Getenv("SLASH_COMMAND_GUILD_IDS"), " ", "")
+	if slashCommandGuildIDStr != "" {
+		slashCommandGuildIDs = strings.Split(slashCommandGuildIDStr, ",")
+	}
 
-			// --- (1) 既存のコマンドを取得して「無効化したいもの」を削除 ---
-			existing, err := bots[0].PrimarySession.ApplicationCommands(
+	var registeredCommands []registeredCommand
+	if !isOfficial || shardList.isPrimaryShard() {
+		for _, guild := range slashCommandGuildIDs {
+			existing, fetchErr := bots[0].PrimarySession.ApplicationCommands(
 				bots[0].PrimarySession.State.User.ID,
 				guild,
 			)
-			if err != nil {
-				log.Printf("Cannot fetch existing commands for guild '%s': %v", guild, err)
+			if fetchErr != nil {
+				log.Printf("Cannot fetch existing commands for guild %q: %v", guild, fetchErr)
 			} else {
-				for _, c := range existing {
-					if !isSlashCommandEnabled(c.Name) {
-						err := bots[0].PrimarySession.ApplicationCommandDelete(
-							c.ApplicationID,
-							guild,
-							c.ID,
-						)
-						if err != nil {
-							log.Printf("Failed to delete disabled command %s in guild '%s': %v", c.Name, guild, err)
-						} else {
-							if guild == "" {
-								log.Printf("Deleted disabled command %s GLOBALLY\n", c.Name)
-							} else {
-								log.Printf("Deleted disabled command %s in guild %s\n", c.Name, guild)
-							}
-						}
+				for _, existingCommand := range existing {
+					if isSlashCommandEnabled(existingCommand.Name) {
+						continue
+					}
+					if deleteErr := bots[0].PrimarySession.ApplicationCommandDelete(
+						existingCommand.ApplicationID,
+						guild,
+						existingCommand.ID,
+					); deleteErr != nil {
+						log.Printf("Failed to delete disabled command %s in guild %q: %v", existingCommand.Name, guild, deleteErr)
+					} else if guild == "" {
+						log.Printf("Deleted disabled command %s GLOBALLY\n", existingCommand.Name)
+					} else {
+						log.Printf("Deleted disabled command %s in guild %s\n", existingCommand.Name, guild)
 					}
 				}
 			}
 
-			// --- (2) Enabled なコマンドだけ登録 ---
-			for _, v := range command.All {
-				if !isSlashCommandEnabled(v.Name) {
+			for _, applicationCommand := range command.All {
+				if !isSlashCommandEnabled(applicationCommand.Name) {
 					if guild == "" {
-						log.Printf("Skip disabled command %s GLOBALLY\n", v.Name)
+						log.Printf("Skip disabled command %s GLOBALLY\n", applicationCommand.Name)
 					} else {
-						log.Printf("Skip disabled command %s in guild %s\n", v.Name, guild)
+						log.Printf("Skip disabled command %s in guild %s\n", applicationCommand.Name, guild)
 					}
 					continue
 				}
 
 				if guild == "" {
-					log.Printf("Registering command %s GLOBALLY\n", v.Name)
+					log.Printf("Registering command %s GLOBALLY\n", applicationCommand.Name)
 				} else {
-					log.Printf("Registering command %s in guild %s\n", v.Name, guild)
+					log.Printf("Registering command %s in guild %s\n", applicationCommand.Name, guild)
 				}
 
-				id, err := bots[0].PrimarySession.ApplicationCommandCreate(
+				createdCommand, createErr := bots[0].PrimarySession.ApplicationCommandCreate(
 					bots[0].PrimarySession.State.User.ID,
 					guild,
-					v,
+					applicationCommand,
 				)
-				if err != nil {
-					log.Panicf("Cannot create command: %v", err)
-				} else {
-					registeredCommands = append(registeredCommands, registeredCommand{
-						GuildID:            guild,
-						ApplicationCommand: id,
-					})
+				if createErr != nil {
+					return fmt.Errorf("create command %s for guild %q: %w", applicationCommand.Name, guild, createErr)
 				}
+				registeredCommands = append(registeredCommands, registeredCommand{
+					GuildID:            guild,
+					ApplicationCommand: createdCommand,
+				})
 			}
 		}
 		log.Println("Finishing registering all commands!")
 	}
 
-	<-sc
-	log.Printf("Received Sigterm or Kill signal. Bot will terminate in 1 second")
-	time.Sleep(time.Second)
+	// Redis/Postgres/Discord/コマンド登録が完了してからreadyにします。
+	server.GlobalReady = true
+	log.Println("Bot startup checks completed; health endpoint is ready")
 
-	// only delete the slash commands if we're not the official bot, AND we're the primary/"master" shard
-	if !isOfficial && shards.isPrimaryShard() {
+	<-sc
+	server.GlobalReady = false
+	log.Println("Received shutdown signal. Active games will be unmuted before the Discord session closes.")
+
+	// 通常のDocker更新・再起動ではコマンドを削除しません。
+	if os.Getenv("DELETE_COMMANDS_ON_SHUTDOWN") == "true" && !isOfficial && shardList.isPrimaryShard() {
 		log.Println("Deleting slash commands")
-		for _, v := range registeredCommands {
-			if v.GuildID == "" {
-				log.Printf("Deleting command %s GLOBALLY\n", v.ApplicationCommand.Name)
+		for _, registered := range registeredCommands {
+			if registered.GuildID == "" {
+				log.Printf("Deleting command %s GLOBALLY\n", registered.ApplicationCommand.Name)
 			} else {
-				log.Printf("Deleting command %s on guild %s\n", v.ApplicationCommand.Name, v.GuildID)
+				log.Printf("Deleting command %s on guild %s\n", registered.ApplicationCommand.Name, registered.GuildID)
 			}
-			err = bots[0].PrimarySession.ApplicationCommandDelete(v.ApplicationCommand.ApplicationID, v.GuildID, v.ApplicationCommand.ID)
-			if err != nil {
+			if err := bots[0].PrimarySession.ApplicationCommandDelete(
+				registered.ApplicationCommand.ApplicationID,
+				registered.GuildID,
+				registered.ApplicationCommand.ID,
+			); err != nil {
 				log.Println(err)
 			}
 		}
 		log.Println("Finished deleting all commands")
 	}
 
-	for _, v := range bots {
-		v.Close()
-	}
-	tokenProvider.Close()
 	return nil
 }
 
@@ -373,26 +368,23 @@ func defaultShard() shards {
 	return []uint8{0}
 }
 
-// isPrimaryShard ensures that the FIRST shard running is the 0th/primary shard.
-// This prevents performing additional work when shard instances may overlap
-// (for example, an instance running 0,1, and another running 1,0)
+// isPrimaryShard ensures that the first shard is shard 0.
 func (sr shards) isPrimaryShard() bool {
 	return len(sr) > 0 && sr[0] == 0
 }
 
 func parseShards(str string, maxShards int) (shards, error) {
-	var shards shards
-
+	var result shards
 	tokens := strings.Split(strings.ReplaceAll(str, " ", ""), ",")
 	for _, token := range tokens {
-		v, err := strconv.ParseUint(token, 10, 64)
+		value, err := strconv.ParseUint(token, 10, 64)
 		if err != nil {
-			return shards, err
+			return result, err
 		}
-		if v >= uint64(maxShards) {
-			return shards, fmt.Errorf("shard: %d is greater or equal to the total max shards: %d", v, maxShards)
+		if value >= uint64(maxShards) {
+			return result, fmt.Errorf("shard: %d is greater or equal to the total max shards: %d", value, maxShards)
 		}
-		shards = append(shards, uint8(v))
+		result = append(result, uint8(value))
 	}
-	return shards, nil
+	return result, nil
 }

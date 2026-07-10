@@ -1,17 +1,83 @@
-name: Build and push custom AutoMuteUs
+name: Verify, build and push custom AutoMuteUs
 
 on:
+  pull_request:
+    branches:
+      - master
   push:
-    branches: [ master ]   # ← デフォルトブランチが main ならこのまま
-  workflow_dispatch:      # 手動実行ボタンも有効にする
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: automuteus-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  verify:
+    name: Test and Docker build
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Check Go formatting
+        shell: bash
+        run: |
+          files=(
+            main.go
+            main_stability_test.go
+            bot/bot.go
+            bot/command/new.go
+            bot/command/enjobvil_new_regression_test.go
+            bot/discordGameState.go
+            bot/eventHandler.go
+            bot/helpers.go
+            bot/helpers_regression_test.go
+            bot/redis.go
+            bot/slash_commands.go
+            bot/stability_regression_test.go
+            bot/voice.go
+          )
+          unformatted="$(gofmt -l "${files[@]}")"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Run all Go tests
+        run: go test ./...
+
+      - name: Verify Docker image builds
+        run: docker build --pull --tag automuteus-em:verify .
+
+  build-and-push:
+    name: Push verified Docker image
+    if: github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -27,6 +93,9 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/automuteus_enjobvil:latest
-          platforms: linux/amd64
+            ${{ secrets.DOCKERHUB_USERNAME }}/automuteus_enjobvil:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

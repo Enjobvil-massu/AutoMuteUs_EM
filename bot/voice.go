@@ -95,9 +95,10 @@ func (bot *Bot) applyToAll(dgs *GameState, mute, deaf bool) error {
 // handleTrackedMembers moves/mutes players according to the current game state
 func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.GuildSettings, delay int, handlePriority HandlePriority, gsr GameStateRequest) {
 
-	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
-	for lock == nil {
-		lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
+	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(gsr, 10)
+	if lock == nil || dgs == nil {
+		log.Printf("Unable to update voice states for guild %s because the Redis game-state lock could not be obtained", gsr.GuildID)
+		return
 	}
 
 	g, err := sess.State.Guild(dgs.GuildID)
@@ -160,22 +161,44 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 			} else {
 				users = append(users, userModify)
 			}
-			userData.SetShouldBeMuteDeaf(shouldMute, shouldDeaf)
-			dgs.UpdateUserData(userData.User.UserID, userData)
 		}
 	}
 
-	// we relinquish the lock while we wait
+	expectedPhase := dgs.GameData.GetPhase()
+
+	// We relinquish the game-state lock while waiting and while calling Discord.
 	bot.RedisInterface.SetDiscordGameState(dgs, lock)
 
+	if len(users) == 0 {
+		return
+	}
+
 	voiceLock := bot.RedisInterface.LockVoiceChanges(dgs.ConnectCode, time.Second*time.Duration(delay+1))
+	if voiceLock == nil {
+		log.Printf("Skipped overlapping voice update for game %s", dgs.ConnectCode)
+		return
+	}
 
 	if delay > 0 {
 		log.Printf("Sleeping for %d seconds before applying changes to users\n", delay)
 		time.Sleep(time.Second * time.Duration(delay))
 	}
 
-	if dgs.Running && len(users) > 0 {
+	// A newer phase may have arrived while this request was delayed. Never apply an
+	// obsolete mute plan after the game has already moved on.
+	latest := bot.RedisInterface.GetReadOnlyDiscordGameState(GameStateRequest{
+		GuildID:     dgs.GuildID,
+		ConnectCode: dgs.ConnectCode,
+	})
+	if latest == nil || !latest.Running || latest.GameData.GetPhase() != expectedPhase {
+		if voiceLock != nil {
+			_ = voiceLock.Release(context.Background())
+		}
+		log.Printf("Skipped stale voice update for game %s", dgs.ConnectCode)
+		return
+	}
+
+	if len(users) > 0 {
 		prem, days, _ := bot.PostgresInterface.GetGuildOrUserPremiumStatus(bot.official, nil, dgs.GuildID, "")
 		premTier := premium.FreeTier
 		if !premium.IsExpired(prem, days) {
@@ -223,5 +246,30 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 }
 
 func (bot *Bot) issueMutesAndRecord(guildID, connectCode string, req task.UserModifyRequest, lock *redislock.Lock) error {
-	return bot.TokenProvider.ModifyUsers(guildID, connectCode, req, lock)
+	if err := bot.TokenProvider.ModifyUsers(guildID, connectCode, req, lock); err != nil {
+		return err
+	}
+
+	// Only record the desired state after Discord accepted the modification.
+	// If the request fails, the old state remains and the next game event retries it.
+	stateLock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(GameStateRequest{
+		GuildID:     guildID,
+		ConnectCode: connectCode,
+	}, 5)
+	if stateLock == nil || dgs == nil {
+		log.Printf("Voice changes succeeded for game %s, but the state lock could not be obtained to record them", connectCode)
+		return nil
+	}
+
+	for _, modification := range req.Users {
+		userID := strconv.FormatUint(modification.UserID, 10)
+		userData, err := dgs.GetUser(userID)
+		if err != nil {
+			continue
+		}
+		userData.SetShouldBeMuteDeaf(modification.Mute, modification.Deaf)
+		dgs.UpdateUserData(userID, userData)
+	}
+	bot.RedisInterface.SetDiscordGameState(dgs, stateLock)
+	return nil
 }

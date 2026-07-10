@@ -37,6 +37,10 @@ func (redisInterface *RedisInterface) Init(params interface{}) error {
 		Password: redisParams.Password,
 		DB:       0, // use default DB
 	})
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		_ = rdb.Close()
+		return fmt.Errorf("redis ping failed: %w", err)
+	}
 	redisInterface.client = rdb
 	return nil
 }
@@ -115,6 +119,7 @@ func (redisInterface *RedisInterface) GetReadOnlyDiscordGameState(gsr GameStateR
 			log.Println("RETURNING NIL GAMESTATE FOR READONLY FETCH")
 			return nil
 		}
+		time.Sleep(25 * time.Millisecond)
 		dgs = redisInterface.getDiscordGameState(gsr, false)
 	}
 	return dgs
@@ -132,6 +137,11 @@ func (redisInterface RedisInterface) GetDiscordGameStateAndLockRetries(gsr GameS
 
 func (redisInterface *RedisInterface) GetDiscordGameStateAndLock(gsr GameStateRequest) (*redislock.Lock, *GameState) {
 	key := redisInterface.getDiscordGameStateKey(gsr)
+	if key == "" {
+		// Before the first game state is stored there is no Redis pointer yet.
+		// Use a deterministic per-guild/channel key instead of the global ":lock".
+		key = fmt.Sprintf("automuteus:init:%s:%s:%s:%s", gsr.GuildID, gsr.TextChannel, gsr.VoiceChannel, gsr.ConnectCode)
+	}
 	locker := redislock.New(redisInterface.client)
 	lock, err := locker.Obtain(ctx, key+":lock", time.Millisecond*LockTimeoutMs, &redislock.Options{
 		RetryStrategy: redislock.LimitRetry(redislock.LinearBackoff(time.Millisecond*LinearBackoffMs), MaxRetries),

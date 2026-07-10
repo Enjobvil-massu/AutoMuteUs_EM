@@ -39,6 +39,7 @@ type Bot struct {
 	EndGameChannels map[string]chan EndGameMessage
 
 	ChannelsMapLock sync.RWMutex
+	SubscriberWG    sync.WaitGroup
 
 	PrimarySession *discordgo.Session
 
@@ -113,33 +114,33 @@ func MakeAndStartBot(version, commit, botToken, topGGToken, url, emojiGuildID st
 		return nil
 	}
 
-    log.Println("Finished identifying to the Discord API. Now ready for incoming events")
+	log.Println("Finished identifying to the Discord API. Now ready for incoming events")
 
-    // ✅ 表示文言（新しい環境変数があれば優先、なければ従来の LISTENING を流用）
-    playingText := os.Getenv("AUTOMUTEUS_PLAYING")
-    if playingText == "" {
-    	playingText = os.Getenv("AUTOMUTEUS_LISTENING") // 後方互換
-    }
-    if playingText == "" {
-    	playingText = "エンジョブ村オリジナルBOT"
-    }
+	// ✅ 表示文言（新しい環境変数があれば優先、なければ従来の LISTENING を流用）
+	playingText := os.Getenv("AUTOMUTEUS_PLAYING")
+	if playingText == "" {
+		playingText = os.Getenv("AUTOMUTEUS_LISTENING") // 後方互換
+	}
+	if playingText == "" {
+		playingText = "エンジョブ村オリジナルBOT"
+	}
 
-    // pretty sure this needs to happen per-shard
-    status := discordgo.UpdateStatusData{
-    	IdleSince: nil,
-    	Activities: []*discordgo.Activity{
-    		{
-	    		Name: playingText,
-	    		Type: discordgo.ActivityTypeGame, // ✅ ここが「プレイ中」
-	    	},
-	    },
-	    AFK:    false,
-	    Status: "online", // online / idle / dnd / invisible / "" でも可
-    }
+	// pretty sure this needs to happen per-shard
+	status := discordgo.UpdateStatusData{
+		IdleSince: nil,
+		Activities: []*discordgo.Activity{
+			{
+				Name: playingText,
+				Type: discordgo.ActivityTypeGame, // ✅ ここが「プレイ中」
+			},
+		},
+		AFK:    false,
+		Status: "online", // online / idle / dnd / invisible / "" でも可
+	}
 
-    if err := dg.UpdateStatusComplex(status); err != nil {
-    	log.Println("failed to set playing status:", err)
-    }
+	if err := dg.UpdateStatusComplex(status); err != nil {
+		log.Println("failed to set playing status:", err)
+	}
 
 	if topGGToken != "" {
 		dblClient, err := dbl.NewClient(topGGToken)
@@ -163,9 +164,119 @@ func (bot *Bot) StartMetricsServer(nodeID string) error {
 }
 
 func (bot *Bot) Close() {
+	// Ask every active game worker to unmute users and clean up before the
+	// Discord session is closed. This reduces the chance of users remaining
+	// server-muted during Docker restarts or image updates.
+	activeWorkers := bot.signalAllEndGames()
+	if activeWorkers > 0 {
+		done := make(chan struct{})
+		go func() {
+			bot.SubscriberWG.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			log.Printf("Timed out waiting for %d active game worker(s) to stop cleanly", activeWorkers)
+		}
+	}
+
 	bot.PrimarySession.Close()
 	bot.RedisInterface.Close()
 	bot.StorageInterface.Close()
+}
+
+// startGameSubscriber tracks the worker so shutdown can wait for its final
+// unmute/cleanup sequence before closing the Discord session.
+func (bot *Bot) startGameSubscriber(guildID, connectCode string, endGameChannel chan EndGameMessage) {
+	bot.SubscriberWG.Add(1)
+	go func() {
+		defer bot.SubscriberWG.Done()
+		bot.SubscribeToGameByConnectCode(guildID, connectCode, endGameChannel)
+	}()
+}
+
+// signalAllEndGames is used during graceful shutdown. It does not close the
+// channels because a sender/receiver may still be using them; it sends one
+// buffered stop signal to each worker instead.
+func (bot *Bot) signalAllEndGames() int {
+	bot.ChannelsMapLock.Lock()
+	channels := make([]chan EndGameMessage, 0, len(bot.EndGameChannels))
+	for connectCode, ch := range bot.EndGameChannels {
+		if ch != nil {
+			channels = append(channels, ch)
+		}
+		delete(bot.EndGameChannels, connectCode)
+	}
+	bot.ChannelsMapLock.Unlock()
+
+	for _, ch := range channels {
+		select {
+		case ch <- true:
+		default:
+		}
+	}
+	return len(channels)
+}
+
+// registerEndGameChannel stores the worker channel safely.
+// A buffered channel prevents /stop from blocking if the subscriber is busy.
+func (bot *Bot) registerEndGameChannel(connectCode string, endGameChannel chan EndGameMessage) {
+	if connectCode == "" || endGameChannel == nil {
+		return
+	}
+
+	bot.ChannelsMapLock.Lock()
+	if bot.EndGameChannels == nil {
+		bot.EndGameChannels = make(map[string]chan EndGameMessage)
+	}
+	previous, existed := bot.EndGameChannels[connectCode]
+	bot.EndGameChannels[connectCode] = endGameChannel
+	bot.ChannelsMapLock.Unlock()
+
+	// If a stale worker existed for the same code, ask it to stop without blocking.
+	if existed && previous != nil && previous != endGameChannel {
+		select {
+		case previous <- true:
+		default:
+		}
+	}
+}
+
+// signalEndGame removes a worker channel from the map and signals it once.
+// The operation is non-blocking and safe when /stop is pressed more than once.
+func (bot *Bot) signalEndGame(connectCode string) bool {
+	if connectCode == "" {
+		return false
+	}
+
+	bot.ChannelsMapLock.Lock()
+	endGameChannel, ok := bot.EndGameChannels[connectCode]
+	if ok {
+		delete(bot.EndGameChannels, connectCode)
+	}
+	bot.ChannelsMapLock.Unlock()
+
+	if !ok || endGameChannel == nil {
+		return false
+	}
+
+	select {
+	case endGameChannel <- true:
+	default:
+	}
+	return true
+}
+
+// removeEndGameChannel removes only the channel owned by the current worker.
+// This avoids an older worker deleting a newer worker registered for the same code.
+func (bot *Bot) removeEndGameChannel(connectCode string, endGameChannel chan EndGameMessage) {
+	bot.ChannelsMapLock.Lock()
+	if current, ok := bot.EndGameChannels[connectCode]; ok && current == endGameChannel {
+		delete(bot.EndGameChannels, connectCode)
+	}
+	bot.ChannelsMapLock.Unlock()
 }
 
 var EmojiLock = sync.Mutex{}
@@ -214,23 +325,22 @@ func (bot *Bot) newGuild(emojiGuildID string) func(s *discordgo.Session, m *disc
 				GuildID:     m.Guild.ID,
 				ConnectCode: connCode,
 			}
-			lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
-			for lock == nil {
-				lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
+			lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(gsr, 10)
+			if lock == nil {
+				log.Printf("Unable to restore game %s for guild %s because the Redis lock could not be obtained", connCode, gsr.GuildID)
+				continue
 			}
 			if dgs != nil && dgs.ConnectCode != "" {
 				log.Println("Resubscribing to Redis events for an old game: " + connCode)
-				killChan := make(chan EndGameMessage)
-				go bot.SubscribeToGameByConnectCode(gsr.GuildID, dgs.ConnectCode, killChan)
+				killChan := make(chan EndGameMessage, 1)
+				bot.startGameSubscriber(gsr.GuildID, dgs.ConnectCode, killChan)
 				dgs.Subscribed = true
 
 				bot.RedisInterface.SetDiscordGameState(dgs, lock)
-
-				bot.ChannelsMapLock.Lock()
-				bot.EndGameChannels[dgs.ConnectCode] = killChan
-				bot.ChannelsMapLock.Unlock()
+				bot.registerEndGameChannel(dgs.ConnectCode, killChan)
+			} else {
+				bot.RedisInterface.SetDiscordGameState(nil, lock)
 			}
-			lock.Release(ctx)
 		}
 	}
 }
@@ -246,11 +356,16 @@ func (bot *Bot) leaveGuild(_ *discordgo.Session, m *discordgo.GuildDelete) {
 }
 
 func (bot *Bot) forceEndGame(gsr GameStateRequest) {
-	// lock because we don't want anyone else modifying while we delete
-	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
-
-	for lock == nil {
-		lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
+	// Lock because we don't want anyone else modifying while we delete.
+	// Do not spin forever if Redis is unhealthy; fail safely and log the problem.
+	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(gsr, 10)
+	if lock == nil {
+		log.Printf("Unable to force-end game for guild %s / code %s because the Redis lock could not be obtained", gsr.GuildID, gsr.ConnectCode)
+		return
+	}
+	if dgs == nil {
+		bot.RedisInterface.SetDiscordGameState(nil, lock)
+		return
 	}
 
 	deleted := dgs.DeleteGameStateMsg(bot.PrimarySession, true)
@@ -276,9 +391,10 @@ func MessageDeleteWorker(s *discordgo.Session, msgChannelID, msgID string, waitD
 }
 
 func (bot *Bot) RefreshGameStateMessage(gsr GameStateRequest, sett *settings.GuildSettings) bool {
-	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
-	for lock == nil {
-		lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
+	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(gsr, 10)
+	if lock == nil || dgs == nil {
+		log.Printf("Unable to refresh game message for guild %s because the Redis state lock could not be obtained", gsr.GuildID)
+		return false
 	}
 
 	// don't try to edit this message, because we're about to delete it
@@ -287,6 +403,8 @@ func (bot *Bot) RefreshGameStateMessage(gsr GameStateRequest, sett *settings.Gui
 	// note, this checks the variables being set, not whether or not the actual Discord message still exists
 	gameExists := dgs.GameStateMsg.Exists()
 	if !gameExists {
+		// Always release the Redis lock, even when there is no active message.
+		bot.RedisInterface.SetDiscordGameState(nil, lock)
 		return false // no-op; no active game to refresh
 	}
 
@@ -376,11 +494,7 @@ func getTrackingChannel(guild *discordgo.Guild, userID string) string {
 
 func (bot *Bot) newGame(dgs *GameState) (_ command.NewStatus, activeGames int64) {
 	if dgs.GameStateMsg.Exists() {
-		if v, ok := bot.EndGameChannels[dgs.ConnectCode]; ok {
-			v <- true
-		}
-		delete(bot.EndGameChannels, dgs.ConnectCode)
-
+		bot.signalEndGame(dgs.ConnectCode)
 		dgs.Reset()
 	} else {
 		premStatus, days, err := bot.PostgresInterface.GetGuildOrUserPremiumStatus(
