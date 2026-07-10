@@ -22,12 +22,54 @@ import (
 
 type EndGameMessage bool
 
+func resetCaptureTimer(timer *time.Timer, timeout time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(timeout)
+}
+
+// failSafeEndGame always tries to unmute participants before removing the game state.
+// This prevents users from remaining server-muted when Capture, Redis Pub/Sub, or the
+// subscriber worker stops unexpectedly.
+func (bot *Bot) failSafeEndGame(dgsRequest GameStateRequest, reason string) {
+	dgs := bot.RedisInterface.GetReadOnlyDiscordGameState(dgsRequest)
+	if dgs != nil {
+		var unmuteErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			unmuteErr = bot.applyToAll(dgs, false, false)
+			if unmuteErr == nil {
+				break
+			}
+			log.Printf("Unmute attempt %d/3 failed while ending game (%s): %v", attempt, reason, unmuteErr)
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			}
+		}
+		if unmuteErr != nil {
+			log.Printf("Unable to unmute every user after 3 attempts while ending game (%s): %v", reason, unmuteErr)
+		}
+	}
+	bot.forceEndGame(dgsRequest)
+}
+
 func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGameChannel chan EndGameMessage) {
 	log.Println("Started Redis Subscription worker for " + connectCode)
 
 	notify := task.Subscribe(ctx, bot.RedisInterface.client, connectCode)
+	notifyChannel := notify.Channel()
+	defer func() {
+		if err := notify.Close(); err != nil {
+			log.Println(err)
+		}
+	}()
 
-	timer := time.NewTimer(time.Second * time.Duration(bot.captureTimeout))
+	captureTimeout := time.Second * time.Duration(bot.captureTimeout)
+	timer := time.NewTimer(captureTimeout)
+	defer timer.Stop()
 
 	dgsRequest := GameStateRequest{
 		GuildID:     guildID,
@@ -39,11 +81,14 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 
 	for {
 		select {
-		case message := <-notify.Channel():
-			timer.Reset(time.Second * time.Duration(bot.captureTimeout))
-			if message == nil {
-				break
+		case message, ok := <-notifyChannel:
+			if !ok || message == nil {
+				log.Printf("Redis Pub/Sub channel closed for game %s; ending the game safely", connectCode)
+				bot.removeEndGameChannel(connectCode, endGameChannel)
+				bot.failSafeEndGame(dgsRequest, "Redis Pub/Sub channel closed")
+				return
 			}
+			resetCaptureTimer(timer, captureTimeout)
 
 			// anytime we get a notification message, continue pulling messages off the list until there are no more
 			for {
@@ -54,7 +99,12 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 					log.Println(err)
 					break
 				}
-				log.Printf("Popped job of type %d w/ payload %s\n", job.JobType, job.Payload.(string))
+				payload, ok := job.Payload.(string)
+				if !ok {
+					log.Printf("Ignoring job type %d for game %s because its payload was not a string", job.JobType, connectCode)
+					continue
+				}
+				log.Printf("Popped job of type %d w/ payload %s\n", job.JobType, payload)
 				bot.refreshGameLiveness(connectCode)
 				bot.RedisInterface.RefreshActiveGame(guildID, connectCode)
 
@@ -63,7 +113,7 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 					UserID:    nil,
 					EventTime: int32(time.Now().Unix()),
 					EventType: int16(job.JobType),
-					Payload:   job.Payload.(string),
+					Payload:   payload,
 				}
 				correlatedUserID := ""
 				sett := bot.StorageInterface.GetGuildSettings(guildID)
@@ -74,15 +124,16 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 				// ★ ConnectionJob = Capture の接続/切断通知
 				// ======================================================
 				case task.ConnectionJob:
-					lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
-					for lock == nil {
-						lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
+					lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(dgsRequest, 10)
+					if lock == nil || dgs == nil {
+						log.Printf("Unable to process Capture connection state for game %s because the Redis lock could not be obtained", connectCode)
+						break
 					}
 
 					// 変更前の接続状態を保持（変化があったときだけ Refresh）
 					prevCapture := dgs.CaptureConnected
 
-					if job.Payload == "true" {
+					if payload == "true" {
 						dgs.Linked = true
 
 						// ★ Capture 接続確立！
@@ -116,7 +167,7 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 				// ======================================================
 				case task.LobbyJob:
 					var lobby game.Lobby
-					err = json.Unmarshal([]byte(job.Payload.(string)), &lobby)
+					err = json.Unmarshal([]byte(payload), &lobby)
 					if err != nil {
 						log.Println(err)
 						break
@@ -124,7 +175,7 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 					bot.processLobby(sett, lobby, dgsRequest)
 
 				case task.StateJob:
-					num, err := strconv.ParseInt(job.Payload.(string), 10, 64)
+					num, err := strconv.ParseInt(payload, 10, 64)
 					if err != nil {
 						log.Println(err)
 						break
@@ -133,7 +184,7 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 
 				case task.PlayerJob:
 					var player game.Player
-					err = json.Unmarshal([]byte(job.Payload.(string)), &player)
+					err = json.Unmarshal([]byte(payload), &player)
 					if err != nil {
 						log.Println(err)
 						break
@@ -147,22 +198,29 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 						bot.handleTrackedMembers(bot.PrimarySession, sett, 0, NoPriority, dgsRequest)
 					}
 					if err != nil {
-						bot.PrimarySession.ChannelMessageSend(readOnlyDgs.GameStateMsg.MessageChannelID, sett.LocalizeMessage(&i18n.Message{
-							ID:    "processplayer.error",
-							Other: "Error in muting or deafening {{.User}}. Does the bot have permissions to mute/deafen users in {{.VoiceChannel}}?",
-						},
-							map[string]interface{}{
-								"User":         discord.MentionByUserID(userID),
-								"VoiceChannel": discord.MentionByChannelID(readOnlyDgs.VoiceChannel),
+						log.Printf("Error while processing player event for game %s: %v", connectCode, err)
+						if readOnlyDgs != nil && readOnlyDgs.GameStateMsg.MessageChannelID != "" {
+							_, sendErr := bot.PrimarySession.ChannelMessageSend(readOnlyDgs.GameStateMsg.MessageChannelID, sett.LocalizeMessage(&i18n.Message{
+								ID:    "processplayer.error",
+								Other: "Error in muting or deafening {{.User}}. Does the bot have permissions to mute/deafen users in {{.VoiceChannel}}?",
 							},
-						))
-						server.RecordDiscordRequests(bot.RedisInterface.client, server.MessageCreateDelete, 1)
+								map[string]interface{}{
+									"User":         discord.MentionByUserID(userID),
+									"VoiceChannel": discord.MentionByChannelID(readOnlyDgs.VoiceChannel),
+								},
+							))
+							if sendErr != nil {
+								log.Printf("Unable to send player-processing error to Discord: %v", sendErr)
+							} else {
+								server.RecordDiscordRequests(bot.RedisInterface.client, server.MessageCreateDelete, 1)
+							}
+						}
 					}
 					correlatedUserID = userID
 
 				case task.GameOverJob:
 					var gameOverResult game.Gameover
-					err := json.Unmarshal([]byte(job.Payload.(string)), &gameOverResult)
+					err := json.Unmarshal([]byte(payload), &gameOverResult)
 					if err != nil {
 						log.Println(err)
 						break
@@ -207,9 +265,10 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 							bot.RefreshGameStateMessage(dgsRequest, sett)
 						}
 
-						lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
-						for lock == nil {
-							lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
+						lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(dgsRequest, 10)
+						if lock == nil || dgs == nil {
+							log.Printf("Unable to reset match information for game %s because the Redis lock could not be obtained", connectCode)
+							break
 						}
 						dgs.MatchID = -1
 						dgs.MatchStartUnix = -1
@@ -243,25 +302,14 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 			}
 
 		case <-timer.C:
-			timer.Stop()
-			log.Printf("Killing game w/ code %s after %d seconds of inactivity!\n", connectCode, bot.captureTimeout)
-			err := notify.Close()
-			if err != nil {
-				log.Println(err)
-			}
-			go bot.forceEndGame(dgsRequest)
-			bot.ChannelsMapLock.Lock()
-			delete(bot.EndGameChannels, connectCode)
-			bot.ChannelsMapLock.Unlock()
-
+			log.Printf("Ending game w/ code %s after %d seconds of Capture inactivity\n", connectCode, bot.captureTimeout)
+			bot.removeEndGameChannel(connectCode, endGameChannel)
+			bot.failSafeEndGame(dgsRequest, "Capture timeout")
 			return
 		case <-endGameChannel:
-			log.Println("Redis subscriber received kill signal, closing all pubsubs")
-			err := notify.Close()
-			if err != nil {
-				log.Println(err)
-			}
-			bot.forceEndGame(dgsRequest)
+			log.Println("Redis subscriber received kill signal, ending the game safely")
+			bot.removeEndGameChannel(connectCode, endGameChannel)
+			bot.failSafeEndGame(dgsRequest, "manual stop or game replacement")
 			return
 		}
 	}
@@ -305,9 +353,9 @@ func getWinners(dgs GameState, gameOver game.Gameover) []winnerRecord {
 func (bot *Bot) processPlayer(sett *settings.GuildSettings, player game.Player, dgsRequest GameStateRequest) (bool, string, *GameState, error) {
 	var err error
 	if player.Name != "" {
-		lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
-		for lock == nil {
-			lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
+		lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(dgsRequest, 10)
+		if lock == nil || dgs == nil {
+			return false, "", nil, errors.New("could not obtain Redis game-state lock while processing player data")
 		}
 		dgs.Linked = true
 
@@ -396,9 +444,10 @@ func (bot *Bot) processPlayer(sett *settings.GuildSettings, player game.Player, 
 
 func (bot *Bot) processTransition(phase game.Phase, dgsRequest GameStateRequest) {
 	sett := bot.StorageInterface.GetGuildSettings(dgsRequest.GuildID)
-	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
-	for lock == nil {
-		lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
+	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(dgsRequest, 10)
+	if lock == nil || dgs == nil {
+		log.Printf("Unable to process phase transition for guild %s because the Redis lock could not be obtained", dgsRequest.GuildID)
+		return
 	}
 
 	// ★ 追加: ConnectionJobが来ない場合の保険（Transition来た=Capture接続済み）
@@ -413,7 +462,12 @@ func (bot *Bot) processTransition(phase game.Phase, dgsRequest GameStateRequest)
 
 	oldPhase := dgs.GameData.UpdatePhase(phase)
 	if oldPhase == phase {
-		lock.Release(ctx)
+		// Persist CaptureConnected/LastCapturePing and always release the lock.
+		dgs.Linked = true
+		bot.RedisInterface.SetDiscordGameState(dgs, lock)
+		if initialConnect {
+			bot.RefreshGameStateMessage(dgsRequest, sett)
+		}
 		return
 	}
 	dgs.Linked = true
@@ -472,9 +526,10 @@ func (bot *Bot) processTransition(phase game.Phase, dgsRequest GameStateRequest)
 }
 
 func (bot *Bot) processLobby(sett *settings.GuildSettings, lobby game.Lobby, dgsRequest GameStateRequest) {
-	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
-	for lock == nil {
-		lock, dgs = bot.RedisInterface.GetDiscordGameStateAndLock(dgsRequest)
+	lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(dgsRequest, 10)
+	if lock == nil || dgs == nil {
+		log.Printf("Unable to process lobby data for guild %s because the Redis lock could not be obtained", dgsRequest.GuildID)
+		return
 	}
 
 	// ★ 追加: Lobby来た=Capture接続済みの保険
