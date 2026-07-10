@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/automuteus/automuteus/v8/pkg/settings"
+	"github.com/bwmarrin/discordgo"
 )
 
 func TestNewResponseShowsLaunchDownloadAndCopyableCodeBlocks(t *testing.T) {
@@ -35,7 +36,7 @@ func TestNewResponseShowsLaunchDownloadAndCopyableCodeBlocks(t *testing.T) {
 		}
 	}
 
-	if resp.Data.Flags&1<<6 == 0 {
+	if resp.Data.Flags&discordgo.MessageFlagsEphemeral == 0 {
 		t.Fatal("successful /start response must remain ephemeral")
 	}
 	if len(content) > 2000 {
