@@ -2,7 +2,7 @@ package command
 
 import (
 	"fmt"
-	"strings" // ホストURL整形用
+	"strings"
 
 	"github.com/automuteus/automuteus/v8/pkg/settings"
 	"github.com/bwmarrin/discordgo"
@@ -16,6 +16,8 @@ const (
 	NewNoVoiceChannel
 	NewLockout
 )
+
+const amongUsCaptureDownloadURL = "https://github.com/automuteus/amonguscapture/releases/latest"
 
 type NewInfo struct {
 	Hyperlink    string
@@ -33,64 +35,49 @@ var New = discordgo.ApplicationCommand{
 
 func NewResponse(status NewStatus, info NewInfo, sett *settings.GuildSettings) *discordgo.InteractionResponse {
 	var content string
-	var embeds []*discordgo.MessageEmbed
 
-	// ★ デフォルトは「実行者だけに見える」エフェメラル
+	// /start の接続情報は実行者だけに表示します。
 	flags := discordgo.MessageFlagsEphemeral
 
 	switch status {
 	case NewSuccess:
-		// ===== /start 成功時 =====
-		// 公式と同じAPIリンクを使い、クリックでAmongUsCaptureを起動します。
-		// ホスト/コードのコードブロックは変更しないため、右端のコピー機能も維持されます。
-		content = ""
-		if strings.HasPrefix(info.ApiHyperlink, "http://") || strings.HasPrefix(info.ApiHyperlink, "https://") {
-			content = fmt.Sprintf("🔗 [クリックして AmongUsCapture を起動・接続する](%s)", info.ApiHyperlink)
-		}
-
-		// ---- ホストの見た目を整える ----
-		host := info.MinimalURL
-
-		// ① :443 を消す（https のデフォルトポートなので見た目だけ削る）
+		host := strings.TrimSpace(info.MinimalURL)
 		host = strings.TrimSuffix(host, ":443")
 
-		// ② wss にしたくなった場合（今は使わない）:
-		// host = strings.Replace(host, "https://", "wss://", 1)
-
-		// コードの下に出したい注意文
-		note := "接続後、AmongUsCapture がフリーズする場合があります。\nその場合はキャプチャを再起動し、再度【登録】ボタンを押してください。"
-
-		embeds = []*discordgo.MessageEmbed{
-			{
-				Title: "【AmongUsCapture と接続してください】",
-				Description: fmt.Sprintf(
-					"AmongUsCapture の🔌設定画面で下記を入力してください。\n\n",
-				),
-				Fields: []*discordgo.MessageEmbedField{
-					{
-						Name:   "ホスト",
-						Value:  fmt.Sprintf("```%s```", host),
-						Inline: false,
-					},
-					{
-						Name: "コード",
-						// コードのすぐ下に注意文を表示
-						Value:  fmt.Sprintf("```%s```\n%s", info.ConnectCode, note),
-						Inline: false,
-					},
-				},
-			},
+		launchText := "自動起動リンクを利用できません。\n下のホストとコードを AmongUsCapture へ手動入力してください。"
+		if isHTTPURL(info.ApiHyperlink) {
+			launchText = fmt.Sprintf(
+				"[ここをクリックして AmongUsCapture を起動・接続する](%s)\n※AmongUsCapture が入っているPCでクリックしてください。",
+				strings.TrimSpace(info.ApiHyperlink),
+			)
 		}
 
+		// Embed内のコードブロックではDiscordのコピーアイコンが表示されないため、
+		// 通常メッセージ本文に独立したコードブロックとして表示します。
+		content = fmt.Sprintf(
+			"✅ **AutoMuteUsを開始しました**\n\n"+
+				"まずは自動起動リンクを試してください。\n"+
+				"起動しない場合は、下のホストとコードを AmongUsCapture へ手動入力してください。\n\n"+
+				"🔗 **自動起動**\n%s\n\n"+
+				"🔗 **ホスト**\n```text\n%s\n```\n\n"+
+				"🔗 **コード**\n```text\n%s\n```\n\n"+
+				"接続後、AmongUsCapture がフリーズする場合があります。\n"+
+				"その場合は AmongUsCapture を再起動し、再度【登録】ボタンを押してください。\n\n"+
+				"**AmongUsCaptureを入れていない場合**\n"+
+				"[最新版のAmongUsCaptureをダウンロード](%s)",
+			launchText,
+			host,
+			strings.TrimSpace(info.ConnectCode),
+			amongUsCaptureDownloadURL,
+		)
+
 	case NewNoVoiceChannel:
-		// ボイスチャンネル未参加 → エフェメラルのまま（自分だけにエラー）
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.new.nochannel",
 			Other: "ゲームを開始する前に、ボイスチャンネルへ参加してください。",
 		})
 
 	case NewLockout:
-		// ロックアウト警告はみんなに見えて欲しいので「公開メッセージ」に切り替え
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID: "commands.new.lockout",
 			Other: "現在、起動中のゲーム数が多いため、新しいゲームを開始できません。\n" +
@@ -100,7 +87,7 @@ func NewResponse(status NewStatus, info NewInfo, sett *settings.GuildSettings) *
 			"Games": fmt.Sprintf("%d/%d", info.ActiveGames, DefaultMaxActiveGames),
 		})
 
-		// ここだけ Flags を 0 にして公開メッセージに
+		// ロックアウト警告だけは公開メッセージにします。
 		flags = discordgo.MessageFlags(0)
 	}
 
@@ -109,7 +96,11 @@ func NewResponse(status NewStatus, info NewInfo, sett *settings.GuildSettings) *
 		Data: &discordgo.InteractionResponseData{
 			Flags:   flags,
 			Content: content,
-			Embeds:  embeds,
 		},
 	}
+}
+
+func isHTTPURL(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://")
 }
