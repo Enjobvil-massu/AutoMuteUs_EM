@@ -17,8 +17,6 @@ const (
 	NewLockout
 )
 
-const amongUsCaptureDownloadURL = "https://github.com/automuteus/amonguscapture/releases/latest"
-
 type NewInfo struct {
 	Hyperlink    string
 	MinimalURL   string
@@ -44,31 +42,24 @@ func NewResponse(status NewStatus, info NewInfo, sett *settings.GuildSettings) *
 		host := strings.TrimSpace(info.MinimalURL)
 		host = strings.TrimSuffix(host, ":443")
 
-		launchText := "自動起動リンクを利用できません。\n下のホストとコードを AmongUsCapture へ手動入力してください。"
+		launchText := "現在利用できません。下のホストとコードを手動入力してください。"
 		if isHTTPURL(info.ApiHyperlink) {
 			launchText = fmt.Sprintf(
-				"[ここをクリックして AmongUsCapture を起動・接続する](%s)\n※AmongUsCapture が入っているPCでクリックしてください。",
+				"[AmongUsCaptureを起動・接続する](%s)\n※起動しない場合は、下の情報を手動入力してください。",
 				strings.TrimSpace(info.ApiHyperlink),
 			)
 		}
 
-		// Embed内のコードブロックではDiscordのコピーアイコンが表示されないため、
-		// 通常メッセージ本文に独立したコードブロックとして表示します。
+		// ホストとコードは、選択しやすい独立したコードブロックで表示します。
 		content = fmt.Sprintf(
 			"✅ **AutoMuteUsを開始しました**\n\n"+
-				"まずは自動起動リンクを試してください。\n"+
-				"起動しない場合は、下のホストとコードを AmongUsCapture へ手動入力してください。\n\n"+
 				"🔗 **自動起動**\n%s\n\n"+
-				"🔗 **ホスト**\n```text\n%s\n```\n\n"+
-				"🔗 **コード**\n```text\n%s\n```\n\n"+
-				"接続後、AmongUsCapture がフリーズする場合があります。\n"+
-				"その場合は AmongUsCapture を再起動し、再度【登録】ボタンを押してください。\n\n"+
-				"**AmongUsCaptureを入れていない場合**\n"+
-				"[最新版のAmongUsCaptureをダウンロード](%s)",
+				"🔗 **ホスト**\n```text\n%s\n```\n"+
+				"🔗 **コード**\n```text\n%s\n```\n"+
+				"接続後に固まる場合は、AmongUsCaptureを再起動して再度【登録】を押してください。",
 			launchText,
 			host,
 			strings.TrimSpace(info.ConnectCode),
-			amongUsCaptureDownloadURL,
 		)
 
 	case NewNoVoiceChannel:
