@@ -8,7 +8,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-func TestNewResponseShowsLaunchDownloadAndCopyableCodeBlocks(t *testing.T) {
+func TestNewResponseShowsCompactLaunchAndCodeBlocks(t *testing.T) {
 	resp := NewResponse(NewSuccess, NewInfo{
 		ApiHyperlink: "https://capture.example.com/open/link?connectCode=ABCDEFGH",
 		MinimalURL:   "https://amu.example.com:443",
@@ -27,7 +27,6 @@ func TestNewResponseShowsLaunchDownloadAndCopyableCodeBlocks(t *testing.T) {
 		"https://capture.example.com/open/link?connectCode=ABCDEFGH",
 		"```text\nhttps://amu.example.com\n```",
 		"```text\nABCDEFGH\n```",
-		amongUsCaptureDownloadURL,
 		"AutoMuteUsを開始しました",
 	}
 	for _, want := range checks {
@@ -36,11 +35,14 @@ func TestNewResponseShowsLaunchDownloadAndCopyableCodeBlocks(t *testing.T) {
 		}
 	}
 
+	if strings.Contains(content, "ダウンロード") || strings.Contains(content, "releases/latest") {
+		t.Fatalf("download link must not be included in the compact response: %q", content)
+	}
 	if resp.Data.Flags&discordgo.MessageFlagsEphemeral == 0 {
 		t.Fatal("successful /start response must remain ephemeral")
 	}
-	if len(content) > 2000 {
-		t.Fatalf("Discord content limit exceeded: %d characters", len(content))
+	if len(content) > 1000 {
+		t.Fatalf("compact /start response is unexpectedly long: %d characters", len(content))
 	}
 }
 
@@ -56,7 +58,7 @@ func TestNewResponseKeepsManualConnectionWhenLaunchURLIsUnavailable(t *testing.T
 
 	content := resp.Data.Content
 	checks := []string{
-		"自動起動リンクを利用できません",
+		"現在利用できません",
 		"```text\nhttps://amu.example.com\n```",
 		"```text\nABCDEFGH\n```",
 	}
