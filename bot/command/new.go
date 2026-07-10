@@ -41,7 +41,12 @@ func NewResponse(status NewStatus, info NewInfo, sett *settings.GuildSettings) *
 	switch status {
 	case NewSuccess:
 		// ===== /start 成功時 =====
+		// 公式と同じAPIリンクを使い、クリックでAmongUsCaptureを起動します。
+		// ホスト/コードのコードブロックは変更しないため、右端のコピー機能も維持されます。
 		content = ""
+		if strings.HasPrefix(info.ApiHyperlink, "http://") || strings.HasPrefix(info.ApiHyperlink, "https://") {
+			content = fmt.Sprintf("🔗 [クリックして AmongUsCapture を起動・接続する](%s)", info.ApiHyperlink)
+		}
 
 		// ---- ホストの見た目を整える ----
 		host := info.MinimalURL
@@ -70,7 +75,7 @@ func NewResponse(status NewStatus, info NewInfo, sett *settings.GuildSettings) *
 					{
 						Name: "コード",
 						// コードのすぐ下に注意文を表示
-						Value: fmt.Sprintf("```%s```\n%s", info.ConnectCode, note),
+						Value:  fmt.Sprintf("```%s```\n%s", info.ConnectCode, note),
 						Inline: false,
 					},
 				},
@@ -81,16 +86,16 @@ func NewResponse(status NewStatus, info NewInfo, sett *settings.GuildSettings) *
 		// ボイスチャンネル未参加 → エフェメラルのまま（自分だけにエラー）
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.new.nochannel",
-			Other: "Please join a voice channel before starting a match!",
+			Other: "ゲームを開始する前に、ボイスチャンネルへ参加してください。",
 		})
 
 	case NewLockout:
 		// ロックアウト警告はみんなに見えて欲しいので「公開メッセージ」に切り替え
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID: "commands.new.lockout",
-			Other: "If I start any more games, Discord will lock me out, or throttle the games I'm running! 😦\n" +
-				"Please try again in a few minutes, or consider AutoMuteUs Premium (`/premium`)\n" +
-				"Current Games: {{.Games}}",
+			Other: "現在、起動中のゲーム数が多いため、新しいゲームを開始できません。\n" +
+				"数分待ってから、もう一度 /start を実行してください。\n" +
+				"現在のゲーム数: {{.Games}}",
 		}, map[string]interface{}{
 			"Games": fmt.Sprintf("%d/%d", info.ActiveGames, DefaultMaxActiveGames),
 		})
