@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -63,6 +64,60 @@ func (dgs *GameState) Reset() {
 	dgs.LastCapturePing = 0
 }
 
+// discordGuildMemberPayload is intentionally kept local instead of upgrading discordgo.
+// The current bot uses discordgo v0.27.1, whose User type does not include global_name.
+// Reading the member JSON directly lets us use Discord's display name without changing
+// component APIs or the current button layout.
+type discordGuildMemberPayload struct {
+	Nick string `json:"nick"`
+	User struct {
+		ID         string `json:"id"`
+		Username   string `json:"username"`
+		GlobalName string `json:"global_name"`
+	} `json:"user"`
+}
+
+func chooseDiscordDisplayName(nick, globalName, username, userID string) string {
+	for _, candidate := range []string{nick, globalName, username, userID} {
+		if name := strings.TrimSpace(candidate); name != "" {
+			return name
+		}
+	}
+	return "不明なユーザー"
+}
+
+// resolveDiscordDisplayName follows Discord's visible-name priority:
+// server nickname -> global display name -> account username -> user ID.
+// discordgo v0.27.1 is intentionally retained for compatibility with the
+// current component code, so global_name is read from Discord's REST JSON.
+func resolveDiscordDisplayName(s *discordgo.Session, guildID, userID, nick, username string) string {
+	if name := strings.TrimSpace(nick); name != "" {
+		return name
+	}
+
+	if s != nil && guildID != "" && userID != "" {
+		endpoint := discordgo.EndpointGuildMember(guildID, userID)
+		body, err := s.RequestWithBucketID("GET", endpoint, nil, discordgo.EndpointGuildMembers(guildID))
+		if err == nil {
+			var payload discordGuildMemberPayload
+			if err := json.Unmarshal(body, &payload); err == nil {
+				return chooseDiscordDisplayName(payload.Nick, payload.User.GlobalName, payload.User.Username, userID)
+			}
+		} else {
+			log.Printf("Unable to fetch Discord display name for user %s in guild %s: %v", userID, guildID, err)
+		}
+	}
+
+	return chooseDiscordDisplayName(nick, "", username, userID)
+}
+
+func (dgs *GameState) cacheDisplayName(s *discordgo.Session, guildID, userID, nick, username string) {
+	if dgs.DisplayNames == nil {
+		dgs.DisplayNames = map[string]string{}
+	}
+	dgs.DisplayNames[userID] = resolveDiscordDisplayName(s, guildID, userID, nick, username)
+}
+
 // ギルドメンバー情報をキャッシュしつつ UserData を作成
 func (dgs *GameState) checkCacheAndAddUser(g *discordgo.Guild, s *discordgo.Session, userID string) (UserData, bool) {
 	if g == nil {
@@ -75,17 +130,8 @@ func (dgs *GameState) checkCacheAndAddUser(g *discordgo.Guild, s *discordgo.Sess
 			user := MakeUserDataFromDiscordUser(m.User, m.Nick)
 			dgs.UserData[m.User.ID] = user
 
-			// ニックネーム → なければユーザー名
-			display := m.Nick
-			if display == "" && m.User != nil {
-				display = m.User.Username
-			}
-			if display != "" {
-				if dgs.DisplayNames == nil {
-					dgs.DisplayNames = map[string]string{}
-				}
-				dgs.DisplayNames[m.User.ID] = display
-			}
+			// サーバー内表示名 → Discord表示名 → アカウント名の順で保存
+			dgs.cacheDisplayName(s, g.ID, m.User.ID, m.Nick, m.User.Username)
 
 			return user, true
 		}
@@ -101,16 +147,7 @@ func (dgs *GameState) checkCacheAndAddUser(g *discordgo.Guild, s *discordgo.Sess
 	user := MakeUserDataFromDiscordUser(mem.User, mem.Nick)
 	dgs.UserData[mem.User.ID] = user
 
-	display := mem.Nick
-	if display == "" && mem.User != nil {
-		display = mem.User.Username
-	}
-	if display != "" {
-		if dgs.DisplayNames == nil {
-			dgs.DisplayNames = map[string]string{}
-		}
-		dgs.DisplayNames[mem.User.ID] = display
-	}
+	dgs.cacheDisplayName(s, g.ID, mem.User.ID, mem.Nick, mem.User.Username)
 
 	return user, true
 }
@@ -207,7 +244,13 @@ func (dgs *GameState) ToEmojiEmbedFields(emojis AlivenessEmojis, sett *settings.
 				if dgs.DisplayNames != nil {
 					displayName = dgs.DisplayNames[userID]
 				}
-				// キャッシュがない場合のフォールバック（念のため）
+				// 古い保存データなどでキャッシュがない場合も、ID表示を避ける
+				if displayName == "" {
+					displayName = userData.GetNickName()
+				}
+				if displayName == "" {
+					displayName = userData.GetUserName()
+				}
 				if displayName == "" {
 					displayName = userID
 				}
