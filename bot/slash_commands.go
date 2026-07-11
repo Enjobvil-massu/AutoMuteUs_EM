@@ -70,8 +70,8 @@ const (
 
 // ===== 追加: /new(/start) のエフェメラルに付ける /link & /stop ボタン =====
 func stopButtonComponents(starterUserID string, sett *settings.GuildSettings) []discordgo.MessageComponent {
-	labelLink := "/link"
-	labelStop := "/stop"
+	labelLink := "手動リンク"
+	labelStop := "停止"
 
 	stopID := fmt.Sprintf("%s:%s", stopButtonIDPrefix, starterUserID)
 	linkID := fmt.Sprintf("%s:%s", linkButtonIDPrefix, starterUserID)
@@ -100,40 +100,35 @@ func stopButtonComponents(starterUserID string, sett *settings.GuildSettings) []
 
 // ===== 追加: /link 用 色ボタン生成ヘルパー =====
 func linkColorButtons(starterUserID, targetUserID string) []discordgo.MessageComponent {
-	// AutoMuteUs の色名に合わせておくと安全
-	colorsRow1 := []string{"Red", "Blue", "Green", "Pink", "Orange"}
-	colorsRow2 := []string{"Yellow", "Black", "White", "Purple", "Brown"}
+	// CustomIDに渡す内部値は従来どおり英語のまま維持し、表示だけ日本語化します。
+	colors := []string{
+		"Red", "Blue", "Green", "Pink", "Orange",
+		"Yellow", "Black", "White", "Purple", "Brown",
+		"Cyan", "Lime", "Maroon", "Rose", "Banana",
+		"Gray", "Tan", "Coral",
+	}
 
-	row1 := discordgo.ActionsRow{}
-	for _, c := range colorsRow1 {
-		row1.Components = append(row1.Components, discordgo.Button{
-			CustomID: fmt.Sprintf("%s:%s:%s:%s", linkColorButtonPrefix, starterUserID, targetUserID, c),
+	components := make([]discordgo.MessageComponent, 0, 4)
+	row := discordgo.ActionsRow{}
+	for _, color := range colors {
+		row.Components = append(row.Components, discordgo.Button{
+			CustomID: fmt.Sprintf("%s:%s:%s:%s", linkColorButtonPrefix, starterUserID, targetUserID, color),
 			Style:    discordgo.PrimaryButton,
-			Label:    c,
+			Label:    command.JapaneseColorName(color),
 		})
+		if len(row.Components) == 5 {
+			components = append(components, row)
+			row = discordgo.ActionsRow{}
+		}
 	}
 
-	row2 := discordgo.ActionsRow{}
-	for _, c := range colorsRow2 {
-		row2.Components = append(row2.Components, discordgo.Button{
-			CustomID: fmt.Sprintf("%s:%s:%s:%s", linkColorButtonPrefix, starterUserID, targetUserID, c),
-			Style:    discordgo.PrimaryButton,
-			Label:    c,
-		})
-	}
-
-	// UNLINK ボタン
-	row3 := discordgo.ActionsRow{
-		Components: []discordgo.MessageComponent{
-			discordgo.Button{
-				CustomID: fmt.Sprintf("%s:%s:%s:%s", linkColorButtonPrefix, starterUserID, targetUserID, "UNLINK"),
-				Style:    discordgo.SecondaryButton,
-				Label:    "UNLINK",
-			},
-		},
-	}
-
-	return []discordgo.MessageComponent{row1, row2, row3}
+	row.Components = append(row.Components, discordgo.Button{
+		CustomID: fmt.Sprintf("%s:%s:%s:%s", linkColorButtonPrefix, starterUserID, targetUserID, "UNLINK"),
+		Style:    discordgo.SecondaryButton,
+		Label:    "リンク解除",
+	})
+	components = append(components, row)
+	return components
 }
 
 // isUserInTrackedVoiceChannel returns true only when the user is currently in
@@ -230,7 +225,7 @@ func (bot *Bot) handleInteractionCreate(s *discordgo.Session, i *discordgo.Inter
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
 						Flags:   1 << 6,
-						Content: "Give me just a little bit to make a proper response :)",
+						Content: "処理中です。少しだけお待ちください。",
 					},
 				})
 				if err != nil {
@@ -615,7 +610,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				case command.User:
 					content = sett.LocalizeMessage(&i18n.Message{
 						ID:    "commands.stats.user.reset.confirmation",
-						Other: "⚠️**Are you sure?**⚠️\nDo you really want to reset the stats for {{.User}}?\nThis process cannot be undone!",
+						Other: "⚠️**確認**⚠️\n{{.User}} の統計情報をリセットしますか？\nこの操作は取り消せません。",
 					},
 						map[string]interface{}{
 							"User": discord.MentionByUserID(id),
@@ -624,7 +619,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				case command.Guild:
 					content = sett.LocalizeMessage(&i18n.Message{
 						ID:    "commands.stats.guild.reset.confirmation",
-						Other: "⚠️**Are you sure?**⚠️\nDo you really want to reset the stats for **{{.Guild}}**?\nThis process cannot be undone!",
+						Other: "⚠️**確認**⚠️\n**{{.Guild}}** の統計情報をリセットしますか？\nこの操作は取り消せません。",
 					},
 						map[string]interface{}{
 							"Guild": g.Name,
@@ -759,7 +754,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			var components []discordgo.MessageComponent
 			content = sett.LocalizeMessage(&i18n.Message{
 				ID:    "commands.download.guild.confirmation",
-				Other: "⚠️**Are you sure?**⚠️\nIf you download the `{{.Category}}` data now, it will not be downloadable again for 24 hours!",
+				Other: "⚠️**確認**⚠️\n`{{.Category}}` のデータをダウンロードすると、24時間は再ダウンロードできません。",
 			}, map[string]interface{}{
 				"Category": category,
 			})
@@ -1075,7 +1070,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 
 			if !dgs.CaptureConnected {
 				bot.RedisInterface.SetDiscordGameState(nil, lock)
-				return command.PrivateResponse("AmongUsCapture が未接続です。Capture 接続後に色を選択してください。")
+				return command.PrivateResponse("AmongUsCaptureが未接続です。AmongUsCaptureを接続してから色を選択してください。")
 			}
 
 			userID := i.Member.User.ID
@@ -1129,7 +1124,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				if err != nil {
 					content = sett.LocalizeMessage(&i18n.Message{
 						ID:    "commands.stats.user.reset.error",
-						Other: "Encountered an error resetting the stats for {{.User}}: {{.Error}}",
+						Other: "{{.User}} の統計情報をリセット中にエラーが発生しました：{{.Error}}",
 					},
 						map[string]interface{}{
 							"User":  discord.MentionByUserID(id),
@@ -1138,7 +1133,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				} else {
 					content = sett.LocalizeMessage(&i18n.Message{
 						ID:    "commands.stats.user.reset.success",
-						Other: "Successfully reset the stats for {{.User}}!",
+						Other: "{{.User}} の統計情報をリセットしました。",
 					},
 						map[string]interface{}{
 							"User": discord.MentionByUserID(id),
@@ -1147,7 +1142,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			} else {
 				content = sett.LocalizeMessage(&i18n.Message{
 					ID:    "commands.stats.user.reset.notfound",
-					Other: "Failed to gather user from message!",
+					Other: "メッセージからユーザー情報を取得できませんでした。",
 				})
 			}
 			if i.Message.MessageReference != nil {
@@ -1168,7 +1163,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			if err != nil {
 				content = sett.LocalizeMessage(&i18n.Message{
 					ID:    "commands.stats.guild.reset.error",
-					Other: "Encountered an error resetting the stats for this guild: {{.Error}}",
+					Other: "このサーバーの統計情報をリセット中にエラーが発生しました：{{.Error}}",
 				},
 					map[string]interface{}{
 						"Error": err.Error(),
@@ -1176,7 +1171,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			} else {
 				content = sett.LocalizeMessage(&i18n.Message{
 					ID:    "commands.stats.guild.reset.success",
-					Other: "Successfully reset the stats for **{{.Guild}}**!",
+					Other: "**{{.Guild}}** の統計情報をリセットしました。",
 				},
 					map[string]interface{}{
 						"Guild": g.Name,
@@ -1207,7 +1202,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 						Flags: 1 << 6, //private message
 						Content: sett.LocalizeMessage(&i18n.Message{
 							ID:    "commands.download.file.success",
-							Other: "Here's that file for you!",
+							Other: "ファイルを作成しました。",
 						}),
 						Components: []discordgo.MessageComponent{},
 						Files: []*discordgo.File{
@@ -1234,7 +1229,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 						Flags: 1 << 6, //private message
 						Content: sett.LocalizeMessage(&i18n.Message{
 							ID:    "commands.download.file.success",
-							Other: "Here's that file for you!",
+							Other: "ファイルを作成しました。",
 						}),
 						Components: []discordgo.MessageComponent{},
 						Files: []*discordgo.File{
@@ -1261,7 +1256,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 						Flags: 1 << 6, //private message
 						Content: sett.LocalizeMessage(&i18n.Message{
 							ID:    "commands.download.file.success",
-							Other: "Here's that file for you!",
+							Other: "ファイルを作成しました。",
 						}),
 						Components: []discordgo.MessageComponent{},
 						Files: []*discordgo.File{
@@ -1288,7 +1283,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 						Flags: 1 << 6, //private message
 						Content: sett.LocalizeMessage(&i18n.Message{
 							ID:    "commands.download.file.success",
-							Other: "Here's that file for you!",
+							Other: "ファイルを作成しました。",
 						}),
 						Components: []discordgo.MessageComponent{},
 						Files: []*discordgo.File{
@@ -1315,7 +1310,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 						Flags: 1 << 6, //private message
 						Content: sett.LocalizeMessage(&i18n.Message{
 							ID:    "commands.download.file.success",
-							Other: "Here's that file for you!",
+							Other: "ファイルを作成しました。",
 						}),
 						Components: []discordgo.MessageComponent{},
 						Files: []*discordgo.File{
@@ -1350,7 +1345,7 @@ func downloadErrorResponse(sett *settings.GuildSettings, err error) *discordgo.I
 			Flags: 1 << 6, //private message
 			Content: sett.LocalizeMessage(&i18n.Message{
 				ID:    "commands.download.guild.error",
-				Other: "I encountered an error fetching your stats for download: {{.Error}}",
+				Other: "データの取得中にエラーが発生しました：{{.Error}}",
 			}, map[string]interface{}{
 				"Error": err.Error(),
 			}),
@@ -1394,7 +1389,7 @@ func confirmationComponents(confirmedID string, canceledID string, sett *setting
 					Style:    discordgo.DangerButton,
 					Label: sett.LocalizeMessage(&i18n.Message{
 						ID:    "commands.stats.reset.button.proceed",
-						Other: "Confirm",
+						Other: "実行する",
 					}),
 					Emoji: discordgo.ComponentEmoji{Name: ThumbsUp},
 				},
@@ -1403,7 +1398,7 @@ func confirmationComponents(confirmedID string, canceledID string, sett *setting
 					Style:    discordgo.SecondaryButton,
 					Label: sett.LocalizeMessage(&i18n.Message{
 						ID:    "commands.stats.reset.button.cancel",
-						Other: "Cancel",
+						Other: "キャンセル",
 					}),
 					Emoji: discordgo.ComponentEmoji{Name: X},
 				},
@@ -1415,7 +1410,7 @@ func confirmationComponents(confirmedID string, canceledID string, sett *setting
 func resetCancelResponse(sett *settings.GuildSettings) *discordgo.InteractionResponse {
 	content := sett.LocalizeMessage(&i18n.Message{
 		ID:    "commands.stats.reset.canceled",
-		Other: "Operation has been canceled",
+		Other: "操作をキャンセルしました。",
 	})
 	return &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseUpdateMessage,
@@ -1435,7 +1430,7 @@ func softbanResponse(banned bool, sett *settings.GuildSettings) *discordgo.Inter
 				Flags: 1 << 6, //private message
 				Content: sett.LocalizeMessage(&i18n.Message{
 					ID:    "softban.ignoring",
-					Other: "I'm ignoring you for the next 5 minutes, stop spamming",
+					Other: "コマンドの連続実行が多いため、5分間操作を受け付けません。",
 				}),
 			},
 		}
@@ -1446,7 +1441,7 @@ func softbanResponse(banned bool, sett *settings.GuildSettings) *discordgo.Inter
 			Flags: 1 << 6, //private message
 			Content: sett.LocalizeMessage(&i18n.Message{
 				ID:    "softban.warning",
-				Other: "Please stop spamming commands",
+				Other: "コマンドを短時間に連続実行しないでください。",
 			}),
 		},
 	}
