@@ -78,7 +78,7 @@ func (bot *Bot) HandleSettingsCommand(guildID string, sett *settings.GuildSettin
 		return fmt.Sprintf("```JSON\n%s\n```", jBytes)
 	case setting.Reset:
 		sett = settings.MakeGuildSettings()
-		sendMsg = "Resetting guild settings to default values"
+		sendMsg = "サーバーのBOT設定を初期値へ戻しました。"
 		isValid = true
 	case setting.List:
 		fallthrough

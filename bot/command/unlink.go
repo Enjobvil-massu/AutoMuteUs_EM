@@ -16,12 +16,12 @@ const (
 
 var Unlink = discordgo.ApplicationCommand{
 	Name:        "unlink",
-	Description: "Unlink a Discord User from their in-game color",
+	Description: "DiscordユーザーのAmong Usリンクを解除します",
 	Options: []*discordgo.ApplicationCommandOption{
 		{
 			Type:        discordgo.ApplicationCommandOptionUser,
 			Name:        "user",
-			Description: "User to unlink",
+			Description: "リンクを解除するDiscordユーザー",
 			Required:    true,
 		},
 	},
@@ -37,14 +37,14 @@ func UnlinkResponse(status UnlinkStatus, userID string, sett *settings.GuildSett
 	case UnlinkSuccess:
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.unlink.success",
-			Other: "Successfully unlinked {{.UserMention}}",
+			Other: "{{.UserMention}} のリンクを解除しました。",
 		}, map[string]interface{}{
 			"UserMention": discord.MentionByUserID(userID),
 		})
 	case UnlinkNoPlayer:
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.unlink.noplayer",
-			Other: "No player in the current game was detected for {{.UserMention}}",
+			Other: "現在のゲームに {{.UserMention}} のリンク情報が見つかりませんでした。",
 		}, map[string]interface{}{
 			"UserMention": discord.MentionByUserID(userID),
 		})

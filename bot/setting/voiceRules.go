@@ -16,7 +16,7 @@ func FnVoiceRules(sett *settings.GuildSettings, args []string) (interface{}, boo
 		// User didn't pass enough args
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingVoiceRules.enoughArgs",
-			Other: "You didn't pass enough arguments! Correct syntax is: `voiceRules [muted/deafened] [game phase] [alive/dead] [true/false]`",
+			Other: "ミュートの種類、ゲーム状態、生存状態、有効／無効を指定してください。",
 		}), false
 	}
 
@@ -24,20 +24,20 @@ func FnVoiceRules(sett *settings.GuildSettings, args []string) (interface{}, boo
 	if gamePhase == game.UNINITIALIZED {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingVoiceRules.Phase.UNINITIALIZED",
-			Other: "I don't know what {{.PhaseName}} is. The list of game phases are `Lobby`, `Tasks` and `Discussion`.",
+			Other: "ゲーム状態 `{{.PhaseName}}` が正しくありません。",
 		},
 			map[string]interface{}{
-				"PhaseName": args[1],
+				"PhaseName": localizedSettingValue(args[1], sett),
 			}), false
 	}
 
 	if args[2] != "alive" && args[2] != "dead" {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingVoiceRules.neitherAliveDead",
-			Other: "`{{.Arg}}` is neither `alive` or `dead`!",
+			Other: "`{{.Arg}}` は有効な生存状態ではありません。",
 		},
 			map[string]interface{}{
-				"Arg": args[2],
+				"Arg": localizedSettingValue(args[2], sett),
 			}), false
 	}
 
@@ -48,22 +48,22 @@ func FnVoiceRules(sett *settings.GuildSettings, args []string) (interface{}, boo
 		if oldValue {
 			return sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingVoiceRules.queryingCurrentlyOldValues",
-				Other: "When in `{{.PhaseName}}` phase, {{.PlayerGameState}} players are currently {{.PlayerDiscordState}}.",
+				Other: "「{{.PhaseName}}」では、{{.PlayerGameState}}プレイヤーを{{.PlayerDiscordState}}にする設定です。",
 			},
 				map[string]interface{}{
-					"PhaseName":          args[1],
-					"PlayerGameState":    args[2],
-					"PlayerDiscordState": args[0],
+					"PhaseName":          localizedSettingValue(args[1], sett),
+					"PlayerGameState":    localizedSettingValue(args[2], sett),
+					"PlayerDiscordState": localizedSettingValue(args[0], sett),
 				}), false
 		} else {
 			return sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingVoiceRules.queryingCurrentlyValues",
-				Other: "When in `{{.PhaseName}}` phase, {{.PlayerGameState}} players are currently NOT {{.PlayerDiscordState}}.",
+				Other: "「{{.PhaseName}}」では、{{.PlayerGameState}}プレイヤーを{{.PlayerDiscordState}}にしない設定です。",
 			},
 				map[string]interface{}{
-					"PhaseName":          args[1],
-					"PlayerGameState":    args[2],
-					"PlayerDiscordState": args[0],
+					"PhaseName":          localizedSettingValue(args[1], sett),
+					"PlayerGameState":    localizedSettingValue(args[2], sett),
+					"PlayerDiscordState": localizedSettingValue(args[0], sett),
 				}), false
 		}
 	}
@@ -73,22 +73,22 @@ func FnVoiceRules(sett *settings.GuildSettings, args []string) (interface{}, boo
 		if newValue {
 			return sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingVoiceRules.queryingAlreadyValues",
-				Other: "When in `{{.PhaseName}}` phase, {{.PlayerGameState}} players are already {{.PlayerDiscordState}}!",
+				Other: "「{{.PhaseName}}」の{{.PlayerGameState}}プレイヤーは、すでに{{.PlayerDiscordState}}に設定されています。",
 			},
 				map[string]interface{}{
-					"PhaseName":          args[1],
-					"PlayerGameState":    args[2],
-					"PlayerDiscordState": args[0],
+					"PhaseName":          localizedSettingValue(args[1], sett),
+					"PlayerGameState":    localizedSettingValue(args[2], sett),
+					"PlayerDiscordState": localizedSettingValue(args[0], sett),
 				}), false
 		} else {
 			return sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingVoiceRules.queryingAlreadyUnValues",
-				Other: "When in `{{.PhaseName}}` phase, {{.PlayerGameState}} players are already un{{.PlayerDiscordState}}!",
+				Other: "「{{.PhaseName}}」の{{.PlayerGameState}}プレイヤーは、すでに{{.PlayerDiscordState}}にしない設定です。",
 			},
 				map[string]interface{}{
-					"PhaseName":          args[1],
-					"PlayerGameState":    args[2],
-					"PlayerDiscordState": args[0],
+					"PhaseName":          localizedSettingValue(args[1], sett),
+					"PlayerGameState":    localizedSettingValue(args[2], sett),
+					"PlayerDiscordState": localizedSettingValue(args[0], sett),
 				}), false
 		}
 	}
@@ -102,22 +102,22 @@ func FnVoiceRules(sett *settings.GuildSettings, args []string) (interface{}, boo
 	if newValue {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingVoiceRules.setValues",
-			Other: "From now on, when in `{{.PhaseName}}` phase, {{.PlayerGameState}} players will be {{.PlayerDiscordState}}.",
+			Other: "「{{.PhaseName}}」の{{.PlayerGameState}}プレイヤーを{{.PlayerDiscordState}}にする設定へ変更しました。",
 		},
 			map[string]interface{}{
-				"PhaseName":          args[1],
-				"PlayerGameState":    args[2],
-				"PlayerDiscordState": args[0],
+				"PhaseName":          localizedSettingValue(args[1], sett),
+				"PlayerGameState":    localizedSettingValue(args[2], sett),
+				"PlayerDiscordState": localizedSettingValue(args[0], sett),
 			}), true
 	} else {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingVoiceRules.setUnValues",
-			Other: "From now on, when in `{{.PhaseName}}` phase, {{.PlayerGameState}} players will be un{{.PlayerDiscordState}}.",
+			Other: "「{{.PhaseName}}」の{{.PlayerGameState}}プレイヤーを{{.PlayerDiscordState}}にしない設定へ変更しました。",
 		},
 			map[string]interface{}{
-				"PhaseName":          args[1],
-				"PlayerGameState":    args[2],
-				"PlayerDiscordState": args[0],
+				"PhaseName":          localizedSettingValue(args[1], sett),
+				"PlayerGameState":    localizedSettingValue(args[2], sett),
+				"PlayerDiscordState": localizedSettingValue(args[0], sett),
 			}), true
 	}
 }

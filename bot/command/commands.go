@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/automuteus/automuteus/v8/pkg/discord"
 	"github.com/automuteus/automuteus/v8/pkg/game"
@@ -79,7 +80,7 @@ func DeadlockGameStateResponse(command string, sett *settings.GuildSettings) *di
 			Flags: 1 << 6,
 			Content: sett.LocalizeMessage(&i18n.Message{
 				ID:    "commands.deadlock",
-				Other: "I wasn't able to obtain the game state for your {{.Command}} command. Please try again.",
+				Other: "コマンド {{.Command}} に必要なゲーム状態を取得できませんでした。もう一度お試しください。",
 			}, map[string]interface{}{
 				"Command": command,
 			}),
@@ -94,7 +95,7 @@ func InsufficientPermissionsResponse(sett *settings.GuildSettings) *discordgo.In
 			Flags: 1 << 6,
 			Content: sett.LocalizeMessage(&i18n.Message{
 				ID:    "commands.no_permissions",
-				Other: "Sorry, you don't have the required permissions to issue that command.",
+				Other: "このコマンドを実行する権限がありません。",
 			}),
 		},
 	}
@@ -137,12 +138,52 @@ func constructEmbedForCommand(
 	}
 }
 
+var japaneseColorChoices = []struct {
+	Value string
+	Label string
+}{
+	{Value: "red", Label: "レッド"},
+	{Value: "blue", Label: "ブルー"},
+	{Value: "green", Label: "グリーン"},
+	{Value: "pink", Label: "ピンク"},
+	{Value: "orange", Label: "オレンジ"},
+	{Value: "yellow", Label: "イエロー"},
+	{Value: "black", Label: "ブラック"},
+	{Value: "white", Label: "ホワイト"},
+	{Value: "purple", Label: "パープル"},
+	{Value: "brown", Label: "ブラウン"},
+	{Value: "cyan", Label: "シアン"},
+	{Value: "lime", Label: "ライム"},
+	{Value: "maroon", Label: "マルーン"},
+	{Value: "rose", Label: "ローズ"},
+	{Value: "banana", Label: "バナナ"},
+	{Value: "gray", Label: "グレー"},
+	{Value: "tan", Label: "タン"},
+	{Value: "coral", Label: "コーラル"},
+}
+
+// JapaneseColorName converts the internal English color value into the
+// Japanese label shown to Discord users. Unknown values are preserved so an
+// unexpected future color remains diagnosable instead of becoming blank.
+func JapaneseColorName(color string) string {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(color), " ", ""))
+	for _, choice := range japaneseColorChoices {
+		if choice.Value == normalized {
+			return choice.Label
+		}
+	}
+	if strings.TrimSpace(color) == "" {
+		return "不明"
+	}
+	return color
+}
+
 func colorsToCommandChoices() []*discordgo.ApplicationCommandOptionChoice {
-	var choices []*discordgo.ApplicationCommandOptionChoice
-	for color := range game.ColorStrings {
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(japaneseColorChoices))
+	for _, choice := range japaneseColorChoices {
 		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
-			Name:  color,
-			Value: color,
+			Name:  choice.Label,
+			Value: choice.Value,
 		})
 	}
 	return choices
@@ -163,7 +204,7 @@ func NoGameResponse(sett *settings.GuildSettings) *discordgo.InteractionResponse
 	return PrivateResponse(
 		sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.error.nogame",
-			Other: "No game is currently running.",
+			Other: "現在実行中のゲームはありません。",
 		}))
 }
 
@@ -184,7 +225,7 @@ func PrivateErrorResponse(cmd string, err error, sett *settings.GuildSettings) *
 			Flags: 1 << 6,
 			Content: sett.LocalizeMessage(&i18n.Message{
 				ID:    "commands.error",
-				Other: "Error executing `{{.Command}}`: `{{.Error}}`",
+				Other: "コマンド `{{.Command}}` の実行中にエラーが発生しました：`{{.Error}}`",
 			}, map[string]interface{}{
 				"Command": cmd,
 				"Error":   err.Error(),
@@ -194,13 +235,13 @@ func PrivateErrorResponse(cmd string, err error, sett *settings.GuildSettings) *
 }
 
 var PermissionStrings = map[int64]string{
-	discordgo.PermissionViewChannel:        "View Channel",
-	discordgo.PermissionSendMessages:       "Send Messages",
-	discordgo.PermissionManageMessages:     "Manage Messages",
-	discordgo.PermissionEmbedLinks:         "Embed Links",
-	discordgo.PermissionUseExternalEmojis:  "Use External Emojis",
-	discordgo.PermissionVoiceMuteMembers:   "Mute Members",
-	discordgo.PermissionVoiceDeafenMembers: "Deafen Members",
+	discordgo.PermissionViewChannel:        "チャンネルを見る",
+	discordgo.PermissionSendMessages:       "メッセージを送信",
+	discordgo.PermissionManageMessages:     "メッセージを管理",
+	discordgo.PermissionEmbedLinks:         "埋め込みリンク",
+	discordgo.PermissionUseExternalEmojis:  "外部絵文字を使用",
+	discordgo.PermissionVoiceMuteMembers:   "メンバーをミュート",
+	discordgo.PermissionVoiceDeafenMembers: "メンバーをスピーカーミュート",
 }
 
 func ReinviteMeResponse(missingPerms int64, channelID string, sett *settings.GuildSettings) *discordgo.InteractionResponse {
@@ -215,8 +256,8 @@ func ReinviteMeResponse(missingPerms int64, channelID string, sett *settings.Gui
 		Data: &discordgo.InteractionResponseData{
 			Content: sett.LocalizeMessage(&i18n.Message{
 				ID: "commands.error.reinvite",
-				Other: "I'm missing the following required permissions to function properly in this server or channel:\n```\n{{.Perm}}```\n" +
-					"Check the permissions for the Text/Voice channel {{.Channel}}, but you may also need to re-invite me [here](https://add.automute.us)",
+				Other: "このサーバーまたはチャンネルで必要な権限が不足しています：\n```\n{{.Perm}}```\n" +
+					"テキスト／ボイスチャンネル {{.Channel}} の権限を確認してください。必要に応じてBOTを再招待してください。",
 			}, map[string]interface{}{
 				"Perm":    missingPermsText,
 				"Channel": discord.MentionByChannelID(channelID),

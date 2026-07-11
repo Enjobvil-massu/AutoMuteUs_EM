@@ -15,6 +15,8 @@ import (
 const DeferredEditSeconds = 2
 const colorSelectID = "select-color"
 
+const captureWaitingInstruction = "🔌 AmongUsCaptureの接続待ちです。\nホストURLとコードを入力して接続してください。"
+
 type GameStateMessage struct {
 	MessageID        string `json:"messageID"`
 	MessageChannelID string `json:"messageChannelID"`
@@ -56,7 +58,8 @@ var DeferredEdits = make(map[string]*discordgo.MessageEmbed)
 var DeferredEditsLock = sync.Mutex{}
 
 // ==== 色情報マスタ ====
-//  key: 英語の色名キーワード（label や value に含まれる文字）
+//
+//	key: 英語の色名キーワード（label や value に含まれる文字）
 type colorInfo struct {
 	JPName string // カタカナ名
 	Square string // 色イメージ用の四角絵文字
@@ -93,9 +96,9 @@ var colorInfoMap = []struct {
 // 色ボタン用のラベルと「クルー絵文字を使うかどうか」を決定
 func buildColorButtonMeta(opt discordgo.SelectMenuOption) (label string, useCrewEmoji bool) {
 	// ✖ はずす（X）用
-	if opt.Value == X || strings.EqualFold(opt.Label, X) {
-		// ラベルだけ。「✖ はずす」
-		return "✖ はずす", false
+	if opt.Value == X || strings.EqualFold(opt.Label, X) ||
+		strings.EqualFold(opt.Value, UnlinkEmojiName) || strings.EqualFold(opt.Label, UnlinkEmojiName) {
+		return "リンク解除", false
 	}
 
 	// label と value をまとめて小文字に
@@ -180,7 +183,7 @@ func (dgs *GameState) CreateMessage(s *discordgo.Session, me *discordgo.MessageE
 			if me.Description != "" {
 				me.Description += "\n\n"
 			}
-			me.Description += "🔌 AmongUsCapture 接続待ちです。\nHost URL と Code を入力して接続してください。"
+			me.Description += captureWaitingInstruction
 		}
 
 		msg := sendEmbedWithComponents(s, channelID, me, []discordgo.MessageComponent{})

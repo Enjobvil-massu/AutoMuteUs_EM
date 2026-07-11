@@ -8,7 +8,7 @@ import (
 
 var Settings = discordgo.ApplicationCommand{
 	Name:        "settings",
-	Description: "View or change AutoMuteUs settings",
+	Description: "AutoMuteUsの設定を表示・変更します",
 	Options:     settingsToCommandOptions(),
 }
 

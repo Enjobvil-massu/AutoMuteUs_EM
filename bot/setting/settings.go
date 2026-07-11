@@ -2,6 +2,7 @@ package setting
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/automuteus/automuteus/v8/pkg/game"
 	"github.com/automuteus/automuteus/v8/pkg/settings"
@@ -94,15 +95,15 @@ type Setting struct {
 
 var phaseChoices = []*discordgo.ApplicationCommandOptionChoice{
 	{
-		Name:  string(game.PhaseNames[game.LOBBY]),
+		Name:  "ロビー",
 		Value: string(game.PhaseNames[game.LOBBY]),
 	},
 	{
-		Name:  string(game.PhaseNames[game.TASKS]),
+		Name:  "タスク中",
 		Value: string(game.PhaseNames[game.TASKS]),
 	},
 	{
-		Name:  string(game.PhaseNames[game.DISCUSS]),
+		Name:  "会議中",
 		Value: string(game.PhaseNames[game.DISCUSS]),
 	},
 }
@@ -110,37 +111,37 @@ var phaseChoices = []*discordgo.ApplicationCommandOptionChoice{
 var AllSettings = []Setting{
 	{
 		Name:      List,
-		ShortDesc: "List All Settings",
+		ShortDesc: "すべての設定を一覧表示します",
 		Arguments: []*discordgo.ApplicationCommandOption{},
 		Premium:   false,
 	},
 	{
 		Name:      Language,
-		ShortDesc: "Bot Language",
+		ShortDesc: "BOTの表示言語を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "language-code",
-				Description: "language-code",
+				Description: "言語コード（日本語は ja）",
 			},
 		},
 		Premium: false,
 	},
 	{
 		Name:      VoiceRules,
-		ShortDesc: "Bot round behavior",
+		ShortDesc: "各ゲーム状態でのミュート動作を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "deaf-or-muted",
-				Description: "deaf-or-muted",
+				Description: "ミュートの種類",
 				Choices: []*discordgo.ApplicationCommandOptionChoice{
 					{
-						Name:  "deafened",
+						Name:  "スピーカーミュート",
 						Value: "deafened",
 					},
 					{
-						Name:  "muted",
+						Name:  "マイクミュート",
 						Value: "muted",
 					},
 				},
@@ -149,21 +150,21 @@ var AllSettings = []Setting{
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "phase",
-				Description: "phase",
+				Description: "ゲーム状態",
 				Choices:     phaseChoices,
 				Required:    true,
 			},
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "alive",
-				Description: "alive",
+				Description: "生存状態",
 				Choices: []*discordgo.ApplicationCommandOptionChoice{
 					{
-						Name:  "alive",
+						Name:  "生存",
 						Value: "alive",
 					},
 					{
-						Name:  "dead",
+						Name:  "死亡",
 						Value: "dead",
 					},
 				},
@@ -172,33 +173,33 @@ var AllSettings = []Setting{
 			{
 				Type:        discordgo.ApplicationCommandOptionBoolean,
 				Name:        "value",
-				Description: "value",
+				Description: "有効／無効",
 			},
 		},
 		Premium: false,
 	},
 	{
 		Name:      AdminUserIDs,
-		ShortDesc: "Bot Admins",
+		ShortDesc: "BOT管理者を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Name:        View,
-				Description: "View Admins",
+				Description: "BOT管理者を表示します",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 			},
 			{
 				Name:        Clear,
-				Description: "Clear Admins",
+				Description: "BOT管理者をすべて解除します",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 			},
 			{
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 				Name:        User,
-				Description: "Discord user to make an Admin",
+				Description: "BOT管理者にするDiscordユーザー",
 				Options: []*discordgo.ApplicationCommandOption{
 					{
 						Name:        User,
-						Description: "Discord user to make an Admin",
+						Description: "BOT管理者にするDiscordユーザー",
 						Type:        discordgo.ApplicationCommandOptionUser,
 						Required:    true,
 					},
@@ -209,26 +210,26 @@ var AllSettings = []Setting{
 	},
 	{
 		Name:      RoleIDs,
-		ShortDesc: "Bot Operators",
+		ShortDesc: "BOT操作を許可するロールを設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Name:        View,
-				Description: "View Operators",
+				Description: "操作許可ロールを表示します",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 			},
 			{
 				Name:        Clear,
-				Description: "Clear Operators",
+				Description: "操作許可ロールをすべて解除します",
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 			},
 			{
 				Type:        discordgo.ApplicationCommandOptionSubCommand,
 				Name:        Role,
-				Description: "Discord role to make Operators",
+				Description: "BOT操作を許可するDiscordロール",
 				Options: []*discordgo.ApplicationCommandOption{
 					{
 						Name:        Role,
-						Description: "Discord role to make Operators",
+						Description: "BOT操作を許可するDiscordロール",
 						Type:        discordgo.ApplicationCommandOptionRole,
 						Required:    true,
 					},
@@ -239,50 +240,50 @@ var AllSettings = []Setting{
 	},
 	{
 		Name:      UnmuteDead,
-		ShortDesc: "Bot unmutes deaths immediately",
+		ShortDesc: "死亡者を直ちにミュート解除するか設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionBoolean,
 				Name:        "unmute",
-				Description: "unmute",
+				Description: "死亡時に直ちに解除するか",
 			},
 		},
 		Premium: false,
 	},
 	{
 		Name:      MapVersion,
-		ShortDesc: "Map version",
+		ShortDesc: "マップ画像の詳細表示を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionBoolean,
 				Name:        "detailed",
-				Description: "detailed",
+				Description: "詳細マップを使用するか",
 			},
 		},
 		Premium: false,
 	},
 	{
 		Name:      Delays,
-		ShortDesc: "Game transition mute delays",
+		ShortDesc: "ゲーム状態が変わる際のミュート遅延を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "start-phase",
-				Description: "start-phase",
+				Description: "変更前のゲーム状態",
 				Choices:     phaseChoices,
 				Required:    true,
 			},
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "end-phase",
-				Description: "end-phase",
+				Description: "変更後のゲーム状態",
 				Choices:     phaseChoices,
 				Required:    true,
 			},
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
 				Name:        "delay",
-				Description: "delay",
+				Description: "遅延秒数",
 				MinValue:    &MinDelay,
 				MaxValue:    MaxDelay,
 			},
@@ -291,12 +292,12 @@ var AllSettings = []Setting{
 	},
 	{
 		Name:      MatchSummary,
-		ShortDesc: "Match Summary Message Duration",
+		ShortDesc: "試合結果メッセージを残す時間を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
 				Name:        "minutes-duration",
-				Description: "minutes-duration",
+				Description: "表示時間（分）",
 				MinValue:    &MinMatchSummaryDelete,
 				MaxValue:    MaxMatchSummaryDelete,
 			},
@@ -305,12 +306,12 @@ var AllSettings = []Setting{
 	},
 	{
 		Name:      MatchSummaryChannel,
-		ShortDesc: "Channel for Match Summaries",
+		ShortDesc: "試合結果を投稿するチャンネルを設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:         discordgo.ApplicationCommandOptionChannel,
 				Name:         "channel",
-				Description:  "channel",
+				Description:  "試合結果を投稿するテキストチャンネル",
 				ChannelTypes: []discordgo.ChannelType{discordgo.ChannelTypeGuildText},
 			},
 		},
@@ -318,36 +319,36 @@ var AllSettings = []Setting{
 	},
 	{
 		Name:      AutoRefresh,
-		ShortDesc: "Autorefresh Status Message",
+		ShortDesc: "状態メッセージの自動更新を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionBoolean,
 				Name:        "autorefresh",
-				Description: "autorefresh",
+				Description: "自動更新を有効にするか",
 			},
 		},
 		Premium: true,
 	},
 	{
 		Name:      LeaderboardMention,
-		ShortDesc: "Mention players in Leaderboard",
+		ShortDesc: "ランキングで参加者をメンションするか設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionBoolean,
 				Name:        "use-mention",
-				Description: "use-mention",
+				Description: "メンションを使用するか",
 			},
 		},
 		Premium: true,
 	},
 	{
 		Name:      LeaderboardSize,
-		ShortDesc: "Player Leaderboard Size",
+		ShortDesc: "ランキングに表示する人数を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
 				Name:        "size",
-				Description: "size",
+				Description: "表示人数",
 				MinValue:    &MinLeaderBoardSize,
 				MaxValue:    MaxLeaderBoardSize,
 			},
@@ -356,12 +357,12 @@ var AllSettings = []Setting{
 	},
 	{
 		Name:      LeaderboardMin,
-		ShortDesc: "Minimum Games for Leaderboard",
+		ShortDesc: "ランキング掲載に必要な最低試合数を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionInteger,
 				Name:        "minimum",
-				Description: "minimum",
+				Description: "最低試合数",
 				MinValue:    &MinLeaderBoardMin,
 				MaxValue:    MaxLeaderBoardMin,
 			},
@@ -370,35 +371,35 @@ var AllSettings = []Setting{
 	},
 	{
 		Name:      MuteSpectators,
-		ShortDesc: "Mute Spectators like Dead Players",
+		ShortDesc: "観戦者を死亡者と同様にミュートするか設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionBoolean,
 				Name:        "mute",
-				Description: "mute",
+				Description: "観戦者をミュートするか",
 			},
 		},
 		Premium: true,
 	},
 	{
 		Name:      DisplayRoomCode,
-		ShortDesc: "Visibility for the ROOM CODE",
+		ShortDesc: "ルームコードの表示方法を設定します",
 		Arguments: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionString,
 				Name:        "visibility",
-				Description: "visibility",
+				Description: "表示方法",
 				Choices: []*discordgo.ApplicationCommandOptionChoice{
 					{
-						Name:  "always",
+						Name:  "常に表示",
 						Value: "always",
 					},
 					{
-						Name:  "spoiler",
+						Name:  "スポイラー表示",
 						Value: "spoiler",
 					},
 					{
-						Name:  "never",
+						Name:  "表示しない",
 						Value: "never",
 					},
 				},
@@ -408,23 +409,97 @@ var AllSettings = []Setting{
 	},
 	{
 		Name:      Show,
-		ShortDesc: "Show All Current Settings",
+		ShortDesc: "現在の設定をJSONで表示します",
 		Arguments: []*discordgo.ApplicationCommandOption{},
 		Premium:   false,
 	},
 	{
 		Name:      Reset,
-		ShortDesc: "Reset Bot Settings",
+		ShortDesc: "BOT設定を初期値へ戻します",
 		Arguments: []*discordgo.ApplicationCommandOption{},
 		Premium:   false,
 	},
+}
+
+var settingDisplayNames = map[string]string{
+	List:                "設定一覧",
+	Language:            "表示言語",
+	VoiceRules:          "ミュート動作",
+	AdminUserIDs:        "BOT管理者",
+	RoleIDs:             "操作許可ロール",
+	UnmuteDead:          "死亡者の即時解除",
+	MapVersion:          "マップ表示",
+	Delays:              "ミュート遅延",
+	MatchSummary:        "試合結果の表示時間",
+	MatchSummaryChannel: "試合結果チャンネル",
+	AutoRefresh:         "状態メッセージ自動更新",
+	LeaderboardMention:  "ランキングのメンション",
+	LeaderboardSize:     "ランキング表示人数",
+	LeaderboardMin:      "ランキング最低試合数",
+	MuteSpectators:      "観戦者のミュート",
+	DisplayRoomCode:     "ルームコード表示",
+	Show:                "現在の設定",
+	Reset:               "設定初期化",
+}
+
+func DisplayName(name string) string {
+	if display, ok := settingDisplayNames[name]; ok {
+		return display
+	}
+	return name
+}
+
+func displaySettingValue(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true":
+		return "有効"
+	case "false":
+		return "無効"
+	case "always":
+		return "常に表示"
+	case "spoiler":
+		return "スポイラー表示"
+	case "never":
+		return "表示しない"
+	case "simple":
+		return "簡易"
+	case "detailed":
+		return "詳細"
+	case "lobby":
+		return "ロビー"
+	case "tasks":
+		return "タスク中"
+	case "discussion":
+		return "会議中"
+	case "alive":
+		return "生存"
+	case "dead":
+		return "死亡"
+	case "muted":
+		return "マイクミュート"
+	case "deafened":
+		return "スピーカーミュート"
+	case "ja":
+		return "日本語（ja）"
+	case "en":
+		return "英語（en）"
+	default:
+		return value
+	}
+}
+
+func localizedSettingValue(value string, sett *settings.GuildSettings) string {
+	if sett == nil || sett.GetLanguage() != "ja" {
+		return value
+	}
+	return displaySettingValue(value)
 }
 
 func ConstructEmbedForSetting(value string, setting *Setting, sett *settings.GuildSettings) discordgo.MessageEmbed {
 	if setting == nil {
 		return discordgo.MessageEmbed{}
 	}
-	title := setting.Name
+	title := DisplayName(setting.Name)
 	if setting.Premium {
 		title = "💎 " + title
 	}
@@ -434,7 +509,7 @@ func ConstructEmbedForSetting(value string, setting *Setting, sett *settings.Gui
 
 	desc := sett.LocalizeMessage(&i18n.Message{
 		ID:    "settings.ConstructEmbedForSetting.StarterDesc",
-		Other: "Type `/settings {{.Command}}` to view or change this setting.\n\n",
+		Other: "`/settings {{.Command}}` でこの設定を表示・変更できます。\n\n",
 	}, map[string]interface{}{
 		"Command": setting.Name,
 	})
@@ -454,9 +529,9 @@ func ConstructEmbedForSetting(value string, setting *Setting, sett *settings.Gui
 			{
 				Name: sett.LocalizeMessage(&i18n.Message{
 					ID:    "settings.ConstructEmbedForSetting.Fields.CurrentValue",
-					Other: "Current Value",
+					Other: "現在の設定値",
 				}),
-				Value:  value,
+				Value:  localizedSettingValue(value, sett),
 				Inline: false,
 			},
 		},

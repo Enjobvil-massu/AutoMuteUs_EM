@@ -21,10 +21,10 @@ func FnDisplayRoomCode(sett *settings.GuildSettings, args []string) (interface{}
 	if !valid[val] {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingDisplayRoomCode.Unrecognized",
-			Other: "{{.Arg}} is not an expected value. See `/settings display-room-code` for usage",
+			Other: "`{{.Arg}}` は有効な表示方法ではありません。",
 		},
 			map[string]interface{}{
-				"Arg": val,
+				"Arg": localizedSettingValue(val, sett),
 			}), false
 	}
 
@@ -32,18 +32,18 @@ func FnDisplayRoomCode(sett *settings.GuildSettings, args []string) (interface{}
 	if val == "spoiler" {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingDisplayRoomCode.Spoiler",
-			Other: "From now on, I will mark the room code as spoiler in the message",
+			Other: "ルームコードをスポイラー表示に変更しました。",
 		},
 			map[string]interface{}{
-				"Arg": val,
+				"Arg": localizedSettingValue(val, sett),
 			}), true
 	} else {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingDisplayRoomCode.AlwaysOrNever",
-			Other: "From now on, I will {{.Arg}} display the room code in the message",
+			Other: "ルームコードの表示方法を「{{.Arg}}」へ変更しました。",
 		},
 			map[string]interface{}{
-				"Arg": val,
+				"Arg": localizedSettingValue(val, sett),
 			}), true
 	}
 }

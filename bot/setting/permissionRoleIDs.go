@@ -14,22 +14,28 @@ func FnPermissionRoleIDs(sett *settings.GuildSettings, args []string) (interface
 	oldRoleIDs := sett.GetPermissionRoleIDs()
 	if len(args) == 0 || args[0] == View {
 		adminRoleCount := len(oldRoleIDs) // caching for optimisation
-		// make a nicely formatted string of all the roles: "role1, role2, role3 and role4"
+		// ロールメンションを現在の表示言語に合う区切りで並べます
 		if adminRoleCount == 0 {
 			return ConstructEmbedForSetting(sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingPermissionRoleIDs.noRoleAdmins",
-				Other: "No Role Admins",
+				Other: "操作許可ロールは設定されていません。",
 			}), s, sett), false
 		} else {
+			separator := ", "
+			lastSeparator := " and "
+			if sett.GetLanguage() == "ja" {
+				separator = "、"
+				lastSeparator = "、"
+			}
 			listOfRoles := ""
 			for index, ID := range oldRoleIDs {
 				switch {
 				case index == 0:
 					listOfRoles += "<@&" + ID + ">"
 				case index == adminRoleCount-1:
-					listOfRoles += " and <@&" + ID + ">"
+					listOfRoles += lastSeparator + "<@&" + ID + ">"
 				default:
-					listOfRoles += ", <@&" + ID + ">"
+					listOfRoles += separator + "<@&" + ID + ">"
 				}
 			}
 			return ConstructEmbedForSetting(listOfRoles, s, sett), false
@@ -42,7 +48,7 @@ func FnPermissionRoleIDs(sett *settings.GuildSettings, args []string) (interface
 		if err != nil {
 			return sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingPermissionRoleIDs.notFound",
-				Other: "Sorry, I didn't recognize the role you provided",
+				Other: "指定されたロールを確認できませんでした。",
 			}), false
 		}
 
@@ -50,19 +56,19 @@ func FnPermissionRoleIDs(sett *settings.GuildSettings, args []string) (interface
 			sett.SetPermissionRoleIDs(append(oldRoleIDs, ID))
 			return sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingPermissionRoleIDs.newBotOperator",
-				Other: "I successfully added that role as bot operators!",
+				Other: "指定されたロールを操作許可ロールへ追加しました。",
 			}), true
 		} else {
 			return sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingPermissionRoleIDs.alreadyBotOperator",
-				Other: "That role was already a bot operator!",
+				Other: "指定されたロールはすでに操作許可ロールです。",
 			}), false
 		}
 	} else {
 		sett.SetPermissionRoleIDs([]string{})
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingPermissionRoleIDs.clearRoles",
-			Other: "Clearing all PermissionRoleIDs!",
+			Other: "操作許可ロールの設定をすべて解除しました。",
 		}), true
 	}
 }

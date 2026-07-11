@@ -20,9 +20,9 @@ func FnMapVersion(sett *settings.GuildSettings, args []string) (interface{}, boo
 	sett.SetMapDetailed(val)
 	return sett.LocalizeMessage(&i18n.Message{
 		ID:    "settings.SettingMapVersion.Success",
-		Other: "From now on, detailed map setting is `{{.Arg}}`",
+		Other: "詳細マップの使用を「{{.Arg}}」へ変更しました。",
 	},
 		map[string]interface{}{
-			"Arg": val,
+			"Arg": localizedSettingValue(fmt.Sprintf("%t", val), sett),
 		}), true
 }
