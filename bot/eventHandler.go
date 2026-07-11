@@ -202,7 +202,7 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 						if readOnlyDgs != nil && readOnlyDgs.GameStateMsg.MessageChannelID != "" {
 							_, sendErr := bot.PrimarySession.ChannelMessageSend(readOnlyDgs.GameStateMsg.MessageChannelID, sett.LocalizeMessage(&i18n.Message{
 								ID:    "processplayer.error",
-								Other: "Error in muting or deafening {{.User}}. Does the bot have permissions to mute/deafen users in {{.VoiceChannel}}?",
+								Other: "{{.User}} のミュート処理中にエラーが発生しました。{{.VoiceChannel}} でメンバーをミュート／スピーカーミュートする権限がBOTにあるか確認してください。",
 							},
 								map[string]interface{}{
 									"User":         discord.MentionByUserID(userID),
@@ -234,15 +234,15 @@ func (bot *Bot) SubscribeToGameByConnectCode(guildID, connectCode string, endGam
 							winners := getWinners(*dgs, gameOverResult)
 							buf := bytes.NewBuffer([]byte{})
 							for i, v := range winners {
-								roleStr := "Crewmate"
+								roleStr := "クルーメイト"
 								if v.role == game.ImposterRole {
-									roleStr = "Imposter"
+									roleStr = "インポスター"
 								}
 								buf.WriteString(fmt.Sprintf("<@%s>", v.userID))
 								if i < len(winners)-1 {
-									buf.WriteRune(',')
+									buf.WriteRune('、')
 								} else {
-									buf.WriteString(fmt.Sprintf(" won as %s", roleStr))
+									buf.WriteString(fmt.Sprintf(" が%sとして勝利しました。", roleStr))
 								}
 							}
 							embed := gameOverMessage(dgs, bot.StatusEmojis, sett, buf.String())
