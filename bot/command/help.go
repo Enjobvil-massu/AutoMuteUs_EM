@@ -9,13 +9,13 @@ import (
 
 var Help = discordgo.ApplicationCommand{
 	Name:        "help",
-	Description: "AutoMuteUs help",
+	Description: "AutoMuteUsのコマンド一覧と使い方を表示します",
 
 	Options: []*discordgo.ApplicationCommandOption{
 		{
 			Type:        discordgo.ApplicationCommandOptionString,
 			Name:        "command",
-			Description: "Command to view details for",
+			Description: "詳しく確認するコマンド",
 			Choices: []*discordgo.ApplicationCommandOptionChoice{
 				{
 					Name:  New.Name,
@@ -106,11 +106,11 @@ func HelpEmbedResponse(commands []*discordgo.ApplicationCommand, sett *settings.
 		Type: "",
 		Title: sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.help.title",
-			Other: "AutoMuteUs Bot Commands:\n",
+			Other: "AutoMuteUs コマンド一覧\n",
 		}),
 		Description: sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.help.subtitle",
-			Other: "[View the Github Project](https://github.com/automuteus/automuteus) or [Join our Discord](https://discord.gg/ZkqZSWF)\n\nType `/help <command>` to see more details on a command!",
+			Other: "`/help <コマンド名>` で各コマンドの詳細を確認できます。",
 		}),
 		Timestamp: "",
 		Color:     15844367, // GOLD
