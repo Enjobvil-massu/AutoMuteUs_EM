@@ -51,7 +51,7 @@ func TestManualLinkButtonsContainAll18ColorsAndJapaneseUnlink(t *testing.T) {
 }
 
 func TestPublicUnlinkButtonLabelIsJapanese(t *testing.T) {
-	label, useEmoji := buildColorButtonMeta(discordgo.SelectMenuOption{Label: "unlink", Value: "unlink"})
+	label, useEmoji := buildColorButtonMeta(discordgo.SelectMenuOption{Label: "unlink", Value: UnlinkEmojiName})
 	if label != "リンク解除" || useEmoji {
 		t.Fatalf("unlink metadata = %q, %v", label, useEmoji)
 	}
