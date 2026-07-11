@@ -1,363 +1,460 @@
 package bot
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"time"
-
-	"github.com/automuteus/automuteus/v8/bot/setting"
-	"github.com/automuteus/automuteus/v8/pkg/amongus"
-	"github.com/automuteus/automuteus/v8/pkg/discord"
-	"github.com/automuteus/automuteus/v8/pkg/game"
-	"github.com/automuteus/automuteus/v8/pkg/settings"
+	"github.com/automuteus/automuteus/v8/internal/server"
+	"github.com/automuteus/automuteus/v8/pkg/rediskey"
+	"github.com/automuteus/automuteus/v8/storage"
+	"github.com/bsm/redislock"
 	"github.com/bwmarrin/discordgo"
-	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"github.com/go-redis/redis/v8"
+	"log"
+	"time"
 )
 
-const ISO8601 = "2006-01-02T15:04:05-0700"
+var ctx = context.Background()
 
-func settingResponse(settingsList []setting.Setting, sett *settings.GuildSettings, prem bool) *discordgo.MessageEmbed {
-	embed := discordgo.MessageEmbed{
-		URL:  "",
-		Type: "",
-		Title: sett.LocalizeMessage(&i18n.Message{
-			ID:    "responses.settingResponse.Title",
-			Other: "設定",
-		}),
-		Description: sett.LocalizeMessage(&i18n.Message{
-			ID:    "responses.settingResponse.Description",
-			Other: "以下の設定は `/settings <設定名>` から変更できます。",
-		}),
-		Timestamp: "",
-		Color:     15844367, // GOLD
-		Image:     nil,
-		Thumbnail: nil,
-		Video:     nil,
-		Provider:  nil,
-		Author:    nil,
-	}
+const LockTimeoutMs = 250
+const LinearBackoffMs = 100
+const MaxRetries = 10
+const SnowflakeLockMs = 3000
 
-	fields := make([]*discordgo.MessageEmbedField, 0)
-	for _, v := range settingsList {
-		if !v.Premium {
-			name := setting.DisplayName(v.Name)
-			fields = append(fields, &discordgo.MessageEmbedField{
-				Name:   name,
-				Value:  sett.LocalizeMessage(&i18n.Message{Other: v.ShortDesc}),
-				Inline: true,
-			})
-		}
-	}
-	var desc string
-	if prem {
-		desc = sett.LocalizeMessage(&i18n.Message{
-			ID:    "responses.settingResponse.PremiumThanks",
-			Other: "AutoMuteUsプレミアムをご利用いただきありがとうございます。",
-		})
-	} else {
-		desc = sett.LocalizeMessage(&i18n.Message{
-			ID:    "responses.settingResponse.PremiumNoThanks",
-			Other: "以下はAutoMuteUsプレミアム専用設定です。",
-		})
-	}
-	fields = append(fields, &discordgo.MessageEmbedField{
-		Name:   "\u200B",
-		Value:  "\u200B",
-		Inline: false,
+// 15 minute timeout
+const GameTimeoutSeconds = 900
+
+type RedisInterface struct {
+	client *redis.Client
+}
+
+func (redisInterface *RedisInterface) Init(params interface{}) error {
+	redisParams := params.(storage.RedisParameters)
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     redisParams.Addr,
+		Username: redisParams.Username,
+		Password: redisParams.Password,
+		DB:       0, // use default DB
 	})
-	fields = append(fields, &discordgo.MessageEmbedField{
-		Name:   "💎 プレミアム設定 💎",
-		Value:  desc,
-		Inline: false,
-	})
-	for _, v := range settingsList {
-		if v.Premium {
-			name := setting.DisplayName(v.Name)
-			fields = append(fields, &discordgo.MessageEmbedField{
-				Name:   name,
-				Value:  sett.LocalizeMessage(&i18n.Message{Other: v.ShortDesc}),
-				Inline: true,
-			})
-		}
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		_ = rdb.Close()
+		return fmt.Errorf("redis ping failed: %w", err)
 	}
-
-	embed.Fields = fields
-	return &embed
-}
-
-func (bot *Bot) gameStateResponse(dgs *GameState, sett *settings.GuildSettings) *discordgo.MessageEmbed {
-	// ゲームのフェーズに応じて表示を切り替え
-	messages := map[game.Phase]func(dgs *GameState, emojis AlivenessEmojis, sett *settings.GuildSettings) *discordgo.MessageEmbed{
-		game.MENU:     menuMessage,
-		game.LOBBY:    lobbyMessage,
-		game.TASKS:    gamePlayMessage,
-		game.DISCUSS:  gamePlayMessage,
-		game.GAMEOVER: gamePlayMessage,
-	}
-	return messages[dgs.GameData.Phase](dgs, bot.StatusEmojis, sett)
-}
-
-// ===== メタ情報 (ホスト / VC / リンク済人数) =====
-
-func lobbyMetaEmbedFields(room, region string, author, voiceChannelID string, playerCount int, linkedPlayers int, sett *settings.GuildSettings) []*discordgo.MessageEmbedField {
-	gameInfoFields := make([]*discordgo.MessageEmbedField, 0)
-
-	// ホスト
-	if author != "" {
-		gameInfoFields = append(gameInfoFields, &discordgo.MessageEmbedField{
-			Name:   "ホスト",
-			Value:  discord.MentionByUserID(author),
-			Inline: true,
-		})
-	}
-
-	// ボイスチャンネル
-	if voiceChannelID != "" {
-		gameInfoFields = append(gameInfoFields, &discordgo.MessageEmbedField{
-			Name:   "ボイスチャンネル",
-			Value:  discord.MentionByChannelID(voiceChannelID),
-			Inline: true,
-		})
-	}
-
-	// 改行用ダミー
-	if len(gameInfoFields) > 0 {
-		gameInfoFields = append(gameInfoFields, &discordgo.MessageEmbedField{
-			Name:   "\u200B",
-			Value:  "\u200B",
-			Inline: true,
-		})
-	}
-
-	// リンク済メンバー（人数が検出数を超えないように補正）
-	if linkedPlayers > playerCount {
-		linkedPlayers = playerCount
-	}
-	gameInfoFields = append(gameInfoFields, &discordgo.MessageEmbedField{
-		Name:   "リンク済人数／参加人数",
-		Value:  fmt.Sprintf("%v/%v", linkedPlayers, playerCount),
-		Inline: false,
-	})
-
-	// ROOM CODE / REGION は表示しない仕様に変更
-
-	return gameInfoFields
-}
-
-// ===== メニュー（待機中） =====
-
-func menuMessage(dgs *GameState, _ AlivenessEmojis, sett *settings.GuildSettings) *discordgo.MessageEmbed {
-	var footer *discordgo.MessageEmbedFooter
-	desc, color := dgs.descriptionAndColor(sett)
-	if color == discord.DEFAULT {
-		color = discord.GREEN
-		footer = &discordgo.MessageEmbedFooter{
-			Text: "(アモアスのロビーに入室すると試合が開始されます)",
-		}
-	}
-
-	fields := make([]*discordgo.MessageEmbedField, 0)
-	author := dgs.GameStateMsg.LeaderID
-	if author != "" {
-		fields = append(fields, &discordgo.MessageEmbedField{
-			Name:   "ホスト",
-			Value:  discord.MentionByUserID(author),
-			Inline: true,
-		})
-	}
-	if dgs.VoiceChannel != "" {
-		fields = append(fields, &discordgo.MessageEmbedField{
-			Name:   "ボイスチャンネル",
-			Value:  "<#" + dgs.VoiceChannel + ">",
-			Inline: true,
-		})
-	}
-	if len(fields) == 2 {
-		fields = append(fields, &discordgo.MessageEmbedField{
-			Name:   "\u200B",
-			Value:  "\u200B",
-			Inline: true,
-		})
-	}
-
-	msg := discordgo.MessageEmbed{
-		URL:         "",
-		Type:        "",
-		Title:       "メニュー",
-		Description: desc,
-		Timestamp:   time.Now().Format(ISO8601),
-		Footer:      footer,
-		Color:       color,
-		Image:       nil,
-		Thumbnail:   nil,
-		Video:       nil,
-		Provider:    nil,
-		Author:      nil,
-		Fields:      fields,
-	}
-	return &msg
-}
-
-// ===== ロビー中 =====
-
-func lobbyMessage(dgs *GameState, emojis AlivenessEmojis, sett *settings.GuildSettings) *discordgo.MessageEmbed {
-	room, region, _ := dgs.GameData.GetRoomRegionMap()
-	gameInfoFields := lobbyMetaEmbedFields(room, region, dgs.GameStateMsg.LeaderID, dgs.VoiceChannel, dgs.GameData.GetNumDetectedPlayers(), dgs.GetCountLinked(), sett)
-
-	listResp := dgs.ToEmojiEmbedFields(emojis, sett)
-	listResp = append(gameInfoFields, listResp...)
-
-	desc, color := dgs.descriptionAndColor(sett)
-	if color == discord.DEFAULT {
-		color = discord.GREEN
-	}
-
-	msg := discordgo.MessageEmbed{
-		URL:         "",
-		Type:        "",
-		Title:       "ロビー",
-		Description: desc,
-		Timestamp:   time.Now().Format(ISO8601),
-		Footer: &discordgo.MessageEmbedFooter{
-			Text: "自動リンクされていない方は、下のボタンから自分の色を選択してください（リンク解除ボタンで解除できます）",
-		},
-		Color:     color,
-		Image:     nil,
-		Thumbnail: nil, // 地図サムネは非表示
-		Video:     nil,
-		Provider:  nil,
-		Author:    nil,
-		Fields:    listResp,
-	}
-	return &msg
-}
-
-// ===== 試合終了メッセージ =====
-
-func gameOverMessage(dgs *GameState, emojis AlivenessEmojis, sett *settings.GuildSettings, winners string) *discordgo.MessageEmbed {
-	_, _, playMap := dgs.GameData.GetRoomRegionMap()
-
-	listResp := dgs.ToEmojiEmbedFields(emojis, sett)
-
-	desc := sett.LocalizeMessage(&i18n.Message{
-		ID:    "eventHandler.gameOver.matchID",
-		Other: "ゲーム終了！ マッチID：`{{.MatchID}}`\n{{.Winners}}",
-	},
-		map[string]interface{}{
-			"MatchID": matchIDCode(dgs.ConnectCode, dgs.MatchID),
-			"Winners": winners,
-		})
-
-	var footer *discordgo.MessageEmbedFooter
-
-	if sett.DeleteGameSummaryMinutes > 0 {
-		footer = &discordgo.MessageEmbedFooter{
-			Text: sett.LocalizeMessage(&i18n.Message{
-				ID:    "eventHandler.gameOver.deleteMessageFooter",
-				Other: "このメッセージは{{.Mins}}分後に削除されます。",
-			},
-				map[string]interface{}{
-					"Mins": sett.DeleteGameSummaryMinutes,
-				}),
-			IconURL:      "",
-			ProxyIconURL: "",
-		}
-	}
-
-	msg := discordgo.MessageEmbed{
-		URL:         "",
-		Type:        "",
-		Title:       sett.LocalizeMessage(amongus.ToLocale(game.GAMEOVER)),
-		Description: desc,
-		Timestamp:   time.Now().Format(ISO8601),
-		Footer:      footer,
-		Color:       discord.DARK_GOLD, // DARK GOLD
-		Image:       nil,
-		Thumbnail:   getThumbnailFromMap(playMap, sett),
-		Video:       nil,
-		Provider:    nil,
-		Author:      nil,
-		Fields:      listResp,
-	}
-	return &msg
-}
-
-// 地図サムネは出さないようにする
-func getThumbnailFromMap(playMap game.PlayMap, sett *settings.GuildSettings) *discordgo.MessageEmbedThumbnail {
+	redisInterface.client = rdb
 	return nil
 }
 
-// ===== ゲーム中（TASK / DISCUSS） =====
+func (bot *Bot) refreshGameLiveness(code string) {
+	t := time.Now()
+	bot.RedisInterface.client.ZAdd(ctx, rediskey.ActiveGamesZSet, &redis.Z{
+		Score:  float64(t.Unix()),
+		Member: code,
+	})
+	before := t.Add(-time.Second * GameTimeoutSeconds)
+	go bot.RedisInterface.client.ZRemRangeByScore(context.Background(), rediskey.ActiveGamesZSet, "-inf", fmt.Sprintf("%d", before.Unix()))
+}
 
-func gamePlayMessage(dgs *GameState, emojis AlivenessEmojis, sett *settings.GuildSettings) *discordgo.MessageEmbed {
-	phase := dgs.GameData.GetPhase()
-	// send empty fields because we don't need to display those fields during the game...
-	listResp := dgs.ToEmojiEmbedFields(emojis, sett)
+func (bot *Bot) rateLimitEventCallback(_ *discordgo.Session, rl *discordgo.RateLimit) {
+	log.Println(rl.Message)
+	server.RecordDiscordRequests(bot.RedisInterface.client, server.InvalidRequest, 1)
+}
 
-	gameInfoFields := lobbyMetaEmbedFields("", "", dgs.GameStateMsg.LeaderID, dgs.VoiceChannel, dgs.GameData.GetNumDetectedPlayers(), dgs.GetCountLinked(), sett)
-	listResp = append(gameInfoFields, listResp...)
-	desc, color := dgs.descriptionAndColor(sett)
-	if color == discord.DEFAULT {
-		switch phase {
-		case game.TASKS:
-			color = discord.BLUE
-		case game.DISCUSS:
-			color = discord.PURPLE
+func (redisInterface *RedisInterface) AddUniqueGuildCounter(guildID string) {
+	_, err := redisInterface.client.SAdd(ctx, rediskey.TotalGuildsSet, string(rediskey.HashGuildID(guildID))).Result()
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func (redisInterface *RedisInterface) LeaveUniqueGuildCounter(guildID string) {
+	_, err := redisInterface.client.SRem(ctx, rediskey.TotalGuildsSet, string(rediskey.HashGuildID(guildID))).Result()
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+// TODO this can technically be a race condition? what happens if one of these is updated while we're fetching...
+func (redisInterface *RedisInterface) getDiscordGameStateKey(gsr GameStateRequest) string {
+	key := redisInterface.CheckPointer(rediskey.ConnectCodePtr(gsr.GuildID, gsr.ConnectCode))
+	if key == "" {
+		key = redisInterface.CheckPointer(rediskey.TextChannelPtr(gsr.GuildID, gsr.TextChannel))
+		if key == "" {
+			key = redisInterface.CheckPointer(rediskey.VoiceChannelPtr(gsr.GuildID, gsr.VoiceChannel))
+		}
+	}
+	return key
+}
+
+type GameStateRequest struct {
+	GuildID      string
+	TextChannel  string
+	VoiceChannel string
+	ConnectCode  string
+}
+
+func (redisInterface *RedisInterface) LockVoiceChanges(connectCode string, dur time.Duration) *redislock.Lock {
+	locker := redislock.New(redisInterface.client)
+	lock, err := locker.Obtain(ctx, rediskey.VoiceChangesForGameCodeLock(connectCode), dur, &redislock.Options{
+		RetryStrategy: redislock.LimitRetry(redislock.LinearBackoff(time.Millisecond*LinearBackoffMs), MaxRetries),
+		Metadata:      "",
+	})
+	if errors.Is(err, redislock.ErrNotObtained) {
+		return nil
+	} else if err != nil {
+		log.Println(err)
+		return nil
+	}
+
+	return lock
+}
+
+// need at least one of these fields to fetch
+func (redisInterface *RedisInterface) GetReadOnlyDiscordGameState(gsr GameStateRequest) *GameState {
+	dgs := redisInterface.getDiscordGameState(gsr, false)
+	i := 0
+	for dgs == nil {
+		i++
+		if i > 10 {
+			log.Println("RETURNING NIL GAMESTATE FOR READONLY FETCH")
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+		dgs = redisInterface.getDiscordGameState(gsr, false)
+	}
+	return dgs
+}
+
+func (redisInterface RedisInterface) GetDiscordGameStateAndLockRetries(gsr GameStateRequest, retries int) (*redislock.Lock, *GameState) {
+	lock, state := redisInterface.GetDiscordGameStateAndLock(gsr)
+	var i int
+	for lock == nil && i < retries {
+		lock, state = redisInterface.GetDiscordGameStateAndLock(gsr)
+		i++
+	}
+	return lock, state
+}
+
+func (redisInterface *RedisInterface) GetDiscordGameStateAndLock(gsr GameStateRequest) (*redislock.Lock, *GameState) {
+	key := redisInterface.getDiscordGameStateKey(gsr)
+	if key == "" {
+		// Before the first game state is stored there is no Redis pointer yet.
+		// Use a deterministic per-guild/channel key instead of the global ":lock".
+		key = fmt.Sprintf("automuteus:init:%s:%s:%s:%s", gsr.GuildID, gsr.TextChannel, gsr.VoiceChannel, gsr.ConnectCode)
+	}
+	locker := redislock.New(redisInterface.client)
+	lock, err := locker.Obtain(ctx, key+":lock", time.Millisecond*LockTimeoutMs, &redislock.Options{
+		RetryStrategy: redislock.LimitRetry(redislock.LinearBackoff(time.Millisecond*LinearBackoffMs), MaxRetries),
+		Metadata:      "",
+	})
+	if errors.Is(err, redislock.ErrNotObtained) {
+		return nil, nil
+	} else if err != nil {
+		log.Println(err)
+		return nil, nil
+	}
+
+	return lock, redisInterface.getDiscordGameState(gsr, true)
+}
+
+func (redisInterface *RedisInterface) getDiscordGameState(gsr GameStateRequest, createOnNil bool) *GameState {
+	key := redisInterface.getDiscordGameStateKey(gsr)
+
+	jsonStr, err := redisInterface.client.Get(ctx, key).Result()
+	switch {
+	case errors.Is(err, redis.Nil):
+		if createOnNil {
+			dgs := NewDiscordGameState(gsr.GuildID)
+			dgs.ConnectCode = gsr.ConnectCode
+			dgs.GameStateMsg.MessageChannelID = gsr.TextChannel
+			dgs.VoiceChannel = gsr.VoiceChannel
+			redisInterface.SetDiscordGameState(dgs, nil)
+			return dgs
+		} else {
+			return nil
+		}
+	case err != nil:
+		log.Println(err)
+		return nil
+	default:
+		dgs := GameState{}
+		err := json.Unmarshal([]byte(jsonStr), &dgs)
+		if err != nil {
+			log.Println(err)
+			return nil
+		}
+		return &dgs
+	}
+}
+
+func (redisInterface *RedisInterface) CheckPointer(pointer string) string {
+	key, err := redisInterface.client.Get(ctx, pointer).Result()
+	if err != nil {
+		return ""
+	}
+	return key
+}
+
+func (redisInterface *RedisInterface) SetDiscordGameState(data *GameState, lock *redislock.Lock) {
+	if data == nil {
+		if lock != nil {
+			lock.Release(ctx)
+		}
+		return
+	}
+
+	key := redisInterface.getDiscordGameStateKey(GameStateRequest{
+		GuildID:      data.GuildID,
+		TextChannel:  data.GameStateMsg.MessageChannelID,
+		VoiceChannel: data.VoiceChannel,
+		ConnectCode:  data.ConnectCode,
+	})
+
+	// connectCode is the 1 sole key we should ever rely on for tracking games. Because we generate it ourselves
+	// randomly, it's unique to every single game, and the capture and bot BOTH agree on the linkage
+	if key == "" && data.ConnectCode == "" {
+		if lock != nil {
+			lock.Release(ctx)
+		}
+		return
+	}
+	key = rediskey.ConnectCodeData(data.GuildID, data.ConnectCode)
+
+	jBytes, err := json.Marshal(data)
+	if err != nil {
+		log.Println(err)
+		if lock != nil {
+			lock.Release(ctx)
+		}
+		return
+	}
+
+	err = redisInterface.client.Set(ctx, key, jBytes, GameTimeoutSeconds*time.Second).Err()
+	if err != nil {
+		log.Println(err)
+	}
+
+	if lock != nil {
+		lock.Release(ctx)
+	}
+
+	if data.ConnectCode != "" {
+		err = redisInterface.client.Set(ctx, rediskey.ConnectCodePtr(data.GuildID, data.ConnectCode), key, GameTimeoutSeconds*time.Second).Err()
+		if err != nil {
+			log.Println(err)
 		}
 	}
 
-	// フェーズ名を日本語寄りに
-	title := ""
-	switch phase {
-	case game.TASKS:
-		title = "タスク中"
-	case game.DISCUSS:
-		title = "会議中"
-	case game.GAMEOVER:
-		title = "ゲーム終了"
-	default:
-		title = sett.LocalizeMessage(amongus.ToLocale(phase))
+	if data.VoiceChannel != "" {
+		err = redisInterface.client.Set(ctx, rediskey.VoiceChannelPtr(data.GuildID, data.VoiceChannel), key, GameTimeoutSeconds*time.Second).Err()
+		if err != nil {
+			log.Println(err)
+		}
 	}
 
-	msg := discordgo.MessageEmbed{
-		URL:         "",
-		Type:        "",
-		Title:       title,
-		Description: desc,
-		Timestamp:   time.Now().Format(ISO8601),
-		Color:       color,
-		Footer:      nil,
-		Image:       nil,
-		Thumbnail:   nil, // 地図サムネなし
-		Video:       nil,
-		Provider:    nil,
-		Author:      nil,
-		Fields:      listResp,
+	if data.GameStateMsg.MessageChannelID != "" {
+		err = redisInterface.client.Set(ctx, rediskey.TextChannelPtr(data.GuildID, data.GameStateMsg.MessageChannelID), key, GameTimeoutSeconds*time.Second).Err()
+		if err != nil {
+			log.Println(err)
+		}
 	}
-
-	return &msg
 }
 
-// returns the description and color to use, based on the gamestate
-// usage dictates DEFAULT should be overwritten by other state subsequently,
-// whereas RED and DARK_ORANGE are error/flag values that should be passed on
-func (dgs *GameState) descriptionAndColor(sett *settings.GuildSettings) (string, int) {
-	if !dgs.Linked {
-		return sett.LocalizeMessage(&i18n.Message{
-			ID:    "responses.notLinked.Description",
-			Other: "❌**オートミュートキャプチャーと未接続**❌",
-		}), discord.RED // red
-	} else if !dgs.Running {
-		return sett.LocalizeMessage(&i18n.Message{
-			ID:    "responses.makeDescription.GameNotRunning",
-			Other: "\n⚠ **BOTは一時停止中です** ⚠\n\n",
-		}), discord.DARK_ORANGE
+func (redisInterface *RedisInterface) RefreshActiveGame(guildID, connectCode string) {
+	key := rediskey.ActiveGamesForGuild(guildID)
+	t := time.Now()
+	_, err := redisInterface.client.ZAdd(ctx, key, &redis.Z{
+		Score:  float64(t.Unix()),
+		Member: connectCode,
+	}).Result()
+
+	if err != nil {
+		log.Println(err)
 	}
-	return "\n", discord.DEFAULT
+	before := t.Add(-time.Second * GameTimeoutSeconds)
+	go redisInterface.client.ZRemRangeByScore(context.Background(), rediskey.ActiveGamesZSet, "-inf", fmt.Sprintf("%d", before.Unix()))
 }
 
-func nonPremiumSettingResponse(sett *settings.GuildSettings) string {
-	return sett.LocalizeMessage(&i18n.Message{
-		ID:    "responses.nonPremiumSetting.Desc",
-		Other: "この設定はAutoMuteUsプレミアム専用です。",
+func (redisInterface *RedisInterface) RemoveOldGame(guildID, connectCode string) {
+	key := rediskey.ActiveGamesForGuild(guildID)
+
+	err := redisInterface.client.ZRem(ctx, key, connectCode).Err()
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+// only deletes from the guild's responsibility, NOT the entire guild counter!
+func (redisInterface *RedisInterface) LoadAllActiveGames(guildID string) []string {
+	hash := rediskey.ActiveGamesForGuild(guildID)
+
+	before := time.Now().Add(-time.Second * GameTimeoutSeconds).Unix()
+
+	games, err := redisInterface.client.ZRangeByScore(ctx, hash, &redis.ZRangeBy{
+		Min:    fmt.Sprintf("%d", before),
+		Max:    fmt.Sprintf("%d", time.Now().Unix()),
+		Offset: 0,
+		Count:  0,
+	}).Result()
+
+	if err != nil {
+		log.Println(err)
+		return []string{}
+	}
+	go redisInterface.client.ZRemRangeByScore(context.Background(), hash, "-inf", fmt.Sprintf("%d", before))
+
+	return games
+}
+
+func (redisInterface *RedisInterface) DeleteDiscordGameState(dgs *GameState) {
+	guildID := dgs.GuildID
+	connCode := dgs.ConnectCode
+	if guildID == "" || connCode == "" {
+		log.Println("Can't delete DGS with null guildID or null ConnCode")
+	}
+	data := redisInterface.getDiscordGameState(GameStateRequest{
+		GuildID:     guildID,
+		ConnectCode: connCode,
+	}, false)
+
+	// couldn't find the game state; exit
+	if data == nil {
+		return
+	}
+	key := rediskey.ConnectCodeData(guildID, connCode)
+
+	locker := redislock.New(redisInterface.client)
+	lock, err := locker.Obtain(ctx, key+":lock", time.Millisecond*LockTimeoutMs, &redislock.Options{
+		RetryStrategy: redislock.LimitRetry(redislock.LinearBackoff(time.Millisecond*LinearBackoffMs), MaxRetries),
+		Metadata:      "",
 	})
+	switch {
+	case errors.Is(err, redislock.ErrNotObtained):
+		fmt.Println("Could not obtain lock!")
+	case err != nil:
+		log.Fatalln(err)
+	default:
+		defer lock.Release(ctx)
+	}
+
+	// delete all the pointers to the underlying -actual- discord data
+	err = redisInterface.client.Del(ctx, rediskey.TextChannelPtr(guildID, data.GameStateMsg.MessageChannelID)).Err()
+	if err != nil {
+		log.Println(err)
+	}
+	err = redisInterface.client.Del(ctx, rediskey.VoiceChannelPtr(guildID, data.VoiceChannel)).Err()
+	if err != nil {
+		log.Println(err)
+	}
+	err = redisInterface.client.Del(ctx, rediskey.ConnectCodePtr(guildID, data.ConnectCode)).Err()
+	if err != nil {
+		log.Println(err)
+	}
+
+	err = redisInterface.client.Del(ctx, key).Err()
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func (redisInterface *RedisInterface) GetUsernameOrUserIDMappings(guildID, key string) (map[string]interface{}, error) {
+	cacheHash := rediskey.GuildCacheHash(guildID)
+
+	value, err := redisInterface.client.HGet(ctx, cacheHash, key).Result()
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			return map[string]interface{}{}, err
+		}
+		// redis.Nil (not found) is not *actually* an error, so return nil
+		return map[string]interface{}{}, nil
+	}
+	var ret map[string]interface{}
+	err = json.Unmarshal([]byte(value), &ret)
+	if err != nil {
+		return map[string]interface{}{}, err
+	}
+
+	return ret, nil
+}
+
+func (redisInterface *RedisInterface) AddUsernameLink(guildID, userID, userName string) error {
+	err := redisInterface.appendToHashedEntry(guildID, userID, userName)
+	if err != nil {
+		return err
+	}
+	return redisInterface.appendToHashedEntry(guildID, userName, userID)
+}
+
+func (redisInterface *RedisInterface) DeleteLinksByUserID(guildID, userID string) error {
+	// over all the usernames associated with just this userID, delete the underlying mapping of username->userID
+	usernames, err := redisInterface.GetUsernameOrUserIDMappings(guildID, userID)
+	if err != nil {
+		log.Println(err)
+	} else {
+		for username := range usernames {
+			err := redisInterface.deleteHashSubEntry(guildID, username, userID)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}
+
+	// now delete the userID->username list entirely
+	cacheHash := rediskey.GuildCacheHash(guildID)
+	return redisInterface.client.HDel(ctx, cacheHash, userID).Err()
+}
+
+func (redisInterface *RedisInterface) appendToHashedEntry(guildID, key, value string) error {
+	resp, err := redisInterface.GetUsernameOrUserIDMappings(guildID, key)
+	if err != nil {
+		log.Println(err)
+	}
+
+	resp[value] = struct{}{}
+
+	return redisInterface.setUsernameOrUserIDMappings(guildID, key, resp)
+}
+
+func (redisInterface *RedisInterface) deleteHashSubEntry(guildID, key, entry string) error {
+	entries, err := redisInterface.GetUsernameOrUserIDMappings(guildID, key)
+	if err != nil {
+		log.Println(err)
+	} else {
+		delete(entries, entry)
+	}
+
+	return redisInterface.setUsernameOrUserIDMappings(guildID, key, entries)
+}
+
+func (redisInterface *RedisInterface) setUsernameOrUserIDMappings(guildID, key string, values map[string]interface{}) error {
+	cacheHash := rediskey.GuildCacheHash(guildID)
+
+	jBytes, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+
+	err = redisInterface.client.HSet(ctx, cacheHash, key, jBytes).Err()
+	// 1 week TTL on username cache
+	if err == nil {
+		redisInterface.client.Expire(ctx, cacheHash, time.Hour*24*7)
+	}
+
+	return err
+}
+
+func (redisInterface *RedisInterface) LockSnowflake(snowflake string) *redislock.Lock {
+	locker := redislock.New(redisInterface.client)
+	lock, err := locker.Obtain(ctx, rediskey.SnowflakeLockID(snowflake), time.Millisecond*SnowflakeLockMs, nil)
+	if errors.Is(err, redislock.ErrNotObtained) {
+		return nil
+	} else if err != nil {
+		log.Println(err)
+		return nil
+	}
+	return lock
+}
+
+func (redisInterface *RedisInterface) Close() error {
+	return redisInterface.client.Close()
 }
