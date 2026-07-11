@@ -18,18 +18,18 @@ const (
 
 var Link = discordgo.ApplicationCommand{
 	Name:        "link",
-	Description: "ディスコード名とアモアス名に手動リンクします",
+	Description: "DiscordユーザーをAmong Us内の色へ手動リンクします",
 	Options: []*discordgo.ApplicationCommandOption{
 		{
 			Type:        discordgo.ApplicationCommandOptionUser,
 			Name:        "user",
-			Description: "User to link",
+			Description: "リンクするDiscordユーザー",
 			Required:    true,
 		},
 		{
 			Type:        discordgo.ApplicationCommandOptionString,
 			Name:        "color",
-			Description: "In-game color",
+			Description: "Among Us内の色",
 			Required:    true,
 			Choices:     colorsToCommandChoices(),
 		},
@@ -46,24 +46,24 @@ func LinkResponse(status LinkStatus, userID, color string, sett *settings.GuildS
 	case LinkSuccess:
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.link.success",
-			Other: "Successfully linked {{.UserMention}} to an in-game player with the color: `{{.Color}}`",
+			Other: "{{.UserMention}} を「{{.Color}}」のプレイヤーにリンクしました。",
 		}, map[string]interface{}{
 			"UserMention": discord.MentionByUserID(userID),
-			"Color":       color,
+			"Color":       JapaneseColorName(color),
 		})
 	case LinkNoPlayer:
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.link.noplayer",
-			Other: "No player in the current game was detected for {{.UserMention}}",
+			Other: "現在のゲームに {{.UserMention}} とリンクできるプレイヤーが見つかりませんでした。",
 		}, map[string]interface{}{
 			"UserMention": discord.MentionByUserID(userID),
 		})
 	case LinkNoGameData:
 		content = sett.LocalizeMessage(&i18n.Message{
 			ID:    "commands.link.nogamedata",
-			Other: "No game data found for the color `{{.Color}}`",
+			Other: "「{{.Color}}」のプレイヤー情報が見つかりませんでした。",
 		}, map[string]interface{}{
-			"Color": color,
+			"Color": JapaneseColorName(color),
 		})
 	}
 
