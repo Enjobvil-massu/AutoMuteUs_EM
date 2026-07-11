@@ -15,9 +15,8 @@ func FnDelays(sett *settings.GuildSettings, args []string) (interface{}, bool) {
 	if len(args) < 2 {
 		// User didn't pass 2 phases, tell them the list of game phases
 		return sett.LocalizeMessage(&i18n.Message{
-			ID: "settings.SettingDelays.missingPhases",
-			Other: "The list of game phases are `Lobby`, `Tasks` and `Discussion`.\n" +
-				"You need to type both phases the game is transitioning from and to to change the delay.",
+			ID:    "settings.SettingDelays.missingPhases",
+			Other: "変更前と変更後のゲーム状態を指定してください。",
 		}), false // find a better wording for this at some point
 	}
 	// now to find the actual game state from the string they passed
@@ -26,18 +25,18 @@ func FnDelays(sett *settings.GuildSettings, args []string) (interface{}, bool) {
 	if gamePhase1 == game.UNINITIALIZED {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingDelays.Phase.UNINITIALIZED",
-			Other: "I don't know what `{{.PhaseName}}` is. The list of game phases are `Lobby`, `Tasks` and `Discussion`.",
+			Other: "ゲーム状態 `{{.PhaseName}}` が正しくありません。",
 		},
 			map[string]interface{}{
-				"PhaseName": args[0],
+				"PhaseName": localizedSettingValue(args[0], sett),
 			}), false
 	} else if gamePhase2 == game.UNINITIALIZED {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingDelays.Phase.UNINITIALIZED",
-			Other: "I don't know what `{{.PhaseName}}` is. The list of game phases are `Lobby`, `Tasks` and `Discussion`.",
+			Other: "ゲーム状態 `{{.PhaseName}}` が正しくありません。",
 		},
 			map[string]interface{}{
-				"PhaseName": args[1],
+				"PhaseName": localizedSettingValue(args[1], sett),
 			}), false
 	}
 
@@ -46,11 +45,11 @@ func FnDelays(sett *settings.GuildSettings, args []string) (interface{}, bool) {
 		// no number was passed, User was querying the delay
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingDelays.delayBetweenPhases",
-			Other: "Currently, the delay when passing from `{{.PhaseA}}` to `{{.PhaseB}}` is {{.OldDelay}}.",
+			Other: "「{{.PhaseA}}」から「{{.PhaseB}}」へ変わる際の遅延は現在{{.OldDelay}}秒です。",
 		},
 			map[string]interface{}{
-				"PhaseA":   args[0],
-				"PhaseB":   args[1],
+				"PhaseA":   localizedSettingValue(args[0], sett),
+				"PhaseB":   localizedSettingValue(args[1], sett),
 				"OldDelay": oldDelay,
 			}), false
 	}
@@ -59,7 +58,7 @@ func FnDelays(sett *settings.GuildSettings, args []string) (interface{}, bool) {
 	if err != nil || newDelay < 0 {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingDelays.wrongNumber",
-			Other: "`{{.Number}}` is not a valid number! Please try again",
+			Other: "`{{.Number}}` は有効な秒数ではありません。",
 		},
 			map[string]interface{}{
 				"Number": args[2],
@@ -69,11 +68,11 @@ func FnDelays(sett *settings.GuildSettings, args []string) (interface{}, bool) {
 	sett.SetDelay(gamePhase1, gamePhase2, newDelay)
 	return sett.LocalizeMessage(&i18n.Message{
 		ID:    "settings.SettingDelays.setDelayBetweenPhases",
-		Other: "The delay when passing from `{{.PhaseA}}` to `{{.PhaseB}}` changed from {{.OldDelay}} to {{.NewDelay}}.",
+		Other: "「{{.PhaseA}}」から「{{.PhaseB}}」へ変わる際の遅延を{{.OldDelay}}秒から{{.NewDelay}}秒へ変更しました。",
 	},
 		map[string]interface{}{
-			"PhaseA":   args[0],
-			"PhaseB":   args[1],
+			"PhaseA":   localizedSettingValue(args[0], sett),
+			"PhaseB":   localizedSettingValue(args[1], sett),
 			"OldDelay": oldDelay,
 			"NewDelay": newDelay,
 		}), true
