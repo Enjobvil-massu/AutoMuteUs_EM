@@ -19,7 +19,7 @@ func FnAutoRefresh(sett *settings.GuildSettings, args []string) (interface{}, bo
 	if val != "t" && val != "true" && val != "f" && val != "false" {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingAutoRefresh.Unrecognized",
-			Other: "{{.Arg}} is not a true/false value. See `/settings auto-refresh` for usage",
+			Other: "`{{.Arg}}` は有効な値ではありません。「有効」または「無効」を選択してください。",
 		},
 			map[string]interface{}{
 				"Arg": val,
@@ -30,22 +30,22 @@ func FnAutoRefresh(sett *settings.GuildSettings, args []string) (interface{}, bo
 	if sett.GetAutoRefresh() == newSet {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingAutoRefresh.Noop",
-			Other: "AutoRefresh was already set to `{{.Value}}`; not doing anything",
+			Other: "状態メッセージの自動更新はすでに「{{.Value}}」です。",
 		},
 			map[string]interface{}{
-				"Value": newSet,
+				"Value": localizedSettingValue(fmt.Sprintf("%t", newSet), sett),
 			}), false
 	}
 	sett.SetAutoRefresh(newSet)
 	if newSet {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingAutoRefresh.True",
-			Other: "From now on, I'll AutoRefresh the game status message",
+			Other: "状態メッセージの自動更新を有効にしました。",
 		}), true
 	} else {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingAutoRefresh.False",
-			Other: "From now on, I will not AutoRefresh the game status message",
+			Other: "状態メッセージの自動更新を無効にしました。",
 		}), true
 	}
 }
