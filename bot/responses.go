@@ -21,11 +21,11 @@ func settingResponse(settingsList []setting.Setting, sett *settings.GuildSetting
 		Type: "",
 		Title: sett.LocalizeMessage(&i18n.Message{
 			ID:    "responses.settingResponse.Title",
-			Other: "Settings",
+			Other: "設定",
 		}),
 		Description: sett.LocalizeMessage(&i18n.Message{
 			ID:    "responses.settingResponse.Description",
-			Other: "Type `/settings <setting>` to change a setting from those listed below",
+			Other: "以下の設定は `/settings <設定名>` から変更できます。",
 		}),
 		Timestamp: "",
 		Color:     15844367, // GOLD
@@ -39,7 +39,7 @@ func settingResponse(settingsList []setting.Setting, sett *settings.GuildSetting
 	fields := make([]*discordgo.MessageEmbedField, 0)
 	for _, v := range settingsList {
 		if !v.Premium {
-			name := v.Name
+			name := setting.DisplayName(v.Name)
 			fields = append(fields, &discordgo.MessageEmbedField{
 				Name:   name,
 				Value:  sett.LocalizeMessage(&i18n.Message{Other: v.ShortDesc}),
@@ -51,12 +51,12 @@ func settingResponse(settingsList []setting.Setting, sett *settings.GuildSetting
 	if prem {
 		desc = sett.LocalizeMessage(&i18n.Message{
 			ID:    "responses.settingResponse.PremiumThanks",
-			Other: "Thanks for being an AutoMuteUs Premium user!",
+			Other: "AutoMuteUsプレミアムをご利用いただきありがとうございます。",
 		})
 	} else {
 		desc = sett.LocalizeMessage(&i18n.Message{
 			ID:    "responses.settingResponse.PremiumNoThanks",
-			Other: "The following settings are only for AutoMuteUs premium users.\nType `/premium` to learn more!",
+			Other: "以下はAutoMuteUsプレミアム専用設定です。",
 		})
 	}
 	fields = append(fields, &discordgo.MessageEmbedField{
@@ -65,13 +65,13 @@ func settingResponse(settingsList []setting.Setting, sett *settings.GuildSetting
 		Inline: false,
 	})
 	fields = append(fields, &discordgo.MessageEmbedField{
-		Name:   "💎 Premium Settings 💎",
+		Name:   "💎 プレミアム設定 💎",
 		Value:  desc,
 		Inline: false,
 	})
 	for _, v := range settingsList {
 		if v.Premium {
-			name := v.Name
+			name := setting.DisplayName(v.Name)
 			fields = append(fields, &discordgo.MessageEmbedField{
 				Name:   name,
 				Value:  sett.LocalizeMessage(&i18n.Message{Other: v.ShortDesc}),
@@ -104,8 +104,8 @@ func lobbyMetaEmbedFields(room, region string, author, voiceChannelID string, pl
 	// ホスト
 	if author != "" {
 		gameInfoFields = append(gameInfoFields, &discordgo.MessageEmbedField{
-			Name: "ホスト",
-			Value: discord.MentionByUserID(author),
+			Name:   "ホスト",
+			Value:  discord.MentionByUserID(author),
 			Inline: true,
 		})
 	}
@@ -113,8 +113,8 @@ func lobbyMetaEmbedFields(room, region string, author, voiceChannelID string, pl
 	// ボイスチャンネル
 	if voiceChannelID != "" {
 		gameInfoFields = append(gameInfoFields, &discordgo.MessageEmbedField{
-			Name:  "ボイスチャンネル",
-			Value: discord.MentionByChannelID(voiceChannelID),
+			Name:   "ボイスチャンネル",
+			Value:  discord.MentionByChannelID(voiceChannelID),
 			Inline: true,
 		})
 	}
@@ -180,9 +180,9 @@ func menuMessage(dgs *GameState, _ AlivenessEmojis, sett *settings.GuildSettings
 	}
 
 	msg := discordgo.MessageEmbed{
-		URL:  "",
-		Type: "",
-		Title: "メニュー",
+		URL:         "",
+		Type:        "",
+		Title:       "メニュー",
 		Description: desc,
 		Timestamp:   time.Now().Format(ISO8601),
 		Footer:      footer,
@@ -212,13 +212,13 @@ func lobbyMessage(dgs *GameState, emojis AlivenessEmojis, sett *settings.GuildSe
 	}
 
 	msg := discordgo.MessageEmbed{
-		URL:  "",
-		Type: "",
-		Title: "ロビー",
+		URL:         "",
+		Type:        "",
+		Title:       "ロビー",
 		Description: desc,
 		Timestamp:   time.Now().Format(ISO8601),
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: "自動リンクされてない方は下のボタンから自分の色を選択してください（✖ でリンク解除）",
+			Text: "自動リンクされていない方は、下のボタンから自分の色を選択してください（リンク解除ボタンで解除できます）",
 		},
 		Color:     color,
 		Image:     nil,
@@ -240,7 +240,7 @@ func gameOverMessage(dgs *GameState, emojis AlivenessEmojis, sett *settings.Guil
 
 	desc := sett.LocalizeMessage(&i18n.Message{
 		ID:    "eventHandler.gameOver.matchID",
-		Other: "Game Over! View the match's stats using Match ID: `{{.MatchID}}`\n{{.Winners}}",
+		Other: "ゲーム終了！ マッチID：`{{.MatchID}}`\n{{.Winners}}",
 	},
 		map[string]interface{}{
 			"MatchID": matchIDCode(dgs.ConnectCode, dgs.MatchID),
@@ -253,7 +253,7 @@ func gameOverMessage(dgs *GameState, emojis AlivenessEmojis, sett *settings.Guil
 		footer = &discordgo.MessageEmbedFooter{
 			Text: sett.LocalizeMessage(&i18n.Message{
 				ID:    "eventHandler.gameOver.deleteMessageFooter",
-				Other: "Deleting message {{.Mins}} mins from:",
+				Other: "このメッセージは{{.Mins}}分後に削除されます。",
 			},
 				map[string]interface{}{
 					"Mins": sett.DeleteGameSummaryMinutes,
@@ -349,7 +349,7 @@ func (dgs *GameState) descriptionAndColor(sett *settings.GuildSettings) (string,
 	} else if !dgs.Running {
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "responses.makeDescription.GameNotRunning",
-			Other: "\n⚠ **Bot is Paused!** ⚠\n\n",
+			Other: "\n⚠ **BOTは一時停止中です** ⚠\n\n",
 		}), discord.DARK_ORANGE
 	}
 	return "\n", discord.DEFAULT
@@ -358,6 +358,6 @@ func (dgs *GameState) descriptionAndColor(sett *settings.GuildSettings) (string,
 func nonPremiumSettingResponse(sett *settings.GuildSettings) string {
 	return sett.LocalizeMessage(&i18n.Message{
 		ID:    "responses.nonPremiumSetting.Desc",
-		Other: "Sorry, but that setting is reserved for AutoMuteUs Premium users! See `/premium` for details",
+		Other: "この設定はAutoMuteUsプレミアム専用です。",
 	})
 }
