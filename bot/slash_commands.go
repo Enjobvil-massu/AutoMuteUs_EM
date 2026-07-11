@@ -110,12 +110,25 @@ func linkColorButtons(starterUserID, targetUserID string) []discordgo.MessageCom
 
 	components := make([]discordgo.MessageComponent, 0, 4)
 	row := discordgo.ActionsRow{}
-	for _, color := range colors {
+
+	for i, color := range colors {
+		colorEmoji := GlobalAlivenessEmojis[true][i]
+
 		row.Components = append(row.Components, discordgo.Button{
-			CustomID: fmt.Sprintf("%s:%s:%s:%s", linkColorButtonPrefix, starterUserID, targetUserID, color),
-			Style:    discordgo.PrimaryButton,
-			Label:    command.JapaneseColorName(color),
+			CustomID: fmt.Sprintf(
+				"%s:%s:%s:%s",
+				linkColorButtonPrefix,
+				starterUserID,
+				targetUserID,
+				color,
+			),
+			Style: discordgo.PrimaryButton,
+			Label: command.JapaneseColorName(color),
+			Emoji: discordgo.ComponentEmoji{
+				ID: colorEmoji.ID,
+			},
 		})
+
 		if len(row.Components) == 5 {
 			components = append(components, row)
 			row = discordgo.ActionsRow{}
@@ -123,10 +136,20 @@ func linkColorButtons(starterUserID, targetUserID string) []discordgo.MessageCom
 	}
 
 	row.Components = append(row.Components, discordgo.Button{
-		CustomID: fmt.Sprintf("%s:%s:%s:%s", linkColorButtonPrefix, starterUserID, targetUserID, "UNLINK"),
-		Style:    discordgo.SecondaryButton,
-		Label:    "リンク解除",
+		CustomID: fmt.Sprintf(
+			"%s:%s:%s:%s",
+			linkColorButtonPrefix,
+			starterUserID,
+			targetUserID,
+			"UNLINK",
+		),
+		Style: discordgo.SecondaryButton,
+		Label: "リンク解除",
+		Emoji: discordgo.ComponentEmoji{
+			Name: X,
+		},
 	})
+
 	components = append(components, row)
 	return components
 }
