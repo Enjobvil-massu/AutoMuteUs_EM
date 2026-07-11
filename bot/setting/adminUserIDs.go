@@ -14,22 +14,28 @@ func FnAdminUserIDs(sett *settings.GuildSettings, args []string) (interface{}, b
 	adminIDs := sett.GetAdminUserIDs()
 	if len(args) == 0 || args[0] == View {
 		adminCount := len(adminIDs) // caching for optimisation
-		// make a nicely formatted string of all the admins: "user1, user2, user3 and user4"
+		// Discordメンションを現在の表示言語に合う区切りで並べます
 		if adminCount == 0 {
 			return ConstructEmbedForSetting(sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingAdminUserIDs.noBotAdmins",
-				Other: "No Bot Admins",
+				Other: "BOT管理者は設定されていません。",
 			}), s, sett), false
 		} else {
+			separator := ", "
+			lastSeparator := " and "
+			if sett.GetLanguage() == "ja" {
+				separator = "、"
+				lastSeparator = "、"
+			}
 			listOfAdmins := ""
 			for index, ID := range adminIDs {
 				switch {
 				case index == 0:
 					listOfAdmins += discord.MentionByUserID(ID)
 				case index == adminCount-1:
-					listOfAdmins += " and " + discord.MentionByUserID(ID)
+					listOfAdmins += lastSeparator + discord.MentionByUserID(ID)
 				default:
-					listOfAdmins += ", " + discord.MentionByUserID(ID)
+					listOfAdmins += separator + discord.MentionByUserID(ID)
 				}
 			}
 			return ConstructEmbedForSetting(listOfAdmins, s, sett), false
@@ -42,7 +48,7 @@ func FnAdminUserIDs(sett *settings.GuildSettings, args []string) (interface{}, b
 		if ID == "" || err != nil {
 			return sett.LocalizeMessage(&i18n.Message{
 				ID:    "settings.SettingAdminUserIDs.notFound",
-				Other: "Sorry, I don't know who `{{.UserName}}` is. You can pass in ID or @mention",
+				Other: "`{{.UserName}}` を特定できません。ユーザーIDまたはメンションで指定してください。",
 			},
 				map[string]interface{}{
 					"UserName": userName,
@@ -53,7 +59,7 @@ func FnAdminUserIDs(sett *settings.GuildSettings, args []string) (interface{}, b
 				sett.SetAdminUserIDs(append(oldIDs, ID))
 				return sett.LocalizeMessage(&i18n.Message{
 					ID:    "settings.SettingAdminUserIDs.newBotAdmin",
-					Other: "{{.User}} is now a bot admin!",
+					Other: "{{.User}} をBOT管理者に追加しました。",
 				},
 					map[string]interface{}{
 						"User": discord.MentionByUserID(ID),
@@ -61,7 +67,7 @@ func FnAdminUserIDs(sett *settings.GuildSettings, args []string) (interface{}, b
 			} else {
 				return sett.LocalizeMessage(&i18n.Message{
 					ID:    "settings.SettingAdminUserIDs.alreadyBotAdmin",
-					Other: "{{.User}} was already a bot admin!",
+					Other: "{{.User}} はすでにBOT管理者です。",
 				},
 					map[string]interface{}{
 						"User": discord.MentionByUserID(ID),
@@ -73,7 +79,7 @@ func FnAdminUserIDs(sett *settings.GuildSettings, args []string) (interface{}, b
 		sett.SetAdminUserIDs([]string{})
 		return sett.LocalizeMessage(&i18n.Message{
 			ID:    "settings.SettingAdminUserIDs.clearAdmins",
-			Other: "Clearing all AdminUserIDs!",
+			Other: "BOT管理者の設定をすべて解除しました。",
 		}), true
 	}
 }
