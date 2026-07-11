@@ -1,6 +1,9 @@
 package settings
 
 import (
+	"os"
+	"strings"
+
 	"github.com/automuteus/automuteus/v8/pkg/game"
 	"github.com/automuteus/automuteus/v8/pkg/locale"
 	"github.com/bwmarrin/discordgo"
@@ -178,7 +181,16 @@ func (gs *GuildSettings) SetUnmuteDeadDuringTasks(v bool) {
 }
 
 func (gs *GuildSettings) GetLanguage() string {
-	return gs.Language
+	// BOT_LANG is the administrator-level language override used by this
+	// self-hosted instance. It also migrates existing guilds that still have
+	// the historical default "en" stored in PostgreSQL without rewriting data.
+	if forced := strings.TrimSpace(os.Getenv("BOT_LANG")); forced != "" {
+		return forced
+	}
+	if stored := strings.TrimSpace(gs.Language); stored != "" {
+		return stored
+	}
+	return locale.DefaultLang
 }
 
 func (gs *GuildSettings) SetLanguage(l string) {
