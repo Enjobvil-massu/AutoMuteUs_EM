@@ -208,13 +208,22 @@ func colorLabelFromEmojiName(name string) string {
 // ・フィールド名: アモアス名（ディスコード表示名）
 // ・フィールド本文: 状態 と 色の情報
 func (dgs *GameState) ToEmojiEmbedFields(emojis AlivenessEmojis, sett *settings.GuildSettings) []*discordgo.MessageEmbedField {
+	players := make([]amongus.PlayerData, 0, len(dgs.GameData.PlayerData))
+	for _, player := range dgs.GameData.PlayerData {
+		players = append(players, player)
+	}
+
+	return dgs.toEmojiEmbedFieldsForPlayers(players, emojis, sett)
+}
+
+func (dgs *GameState) toEmojiEmbedFieldsForPlayers(players []amongus.PlayerData, emojis AlivenessEmojis, sett *settings.GuildSettings) []*discordgo.MessageEmbedField {
 	// 色順で並べるための一時配列（最大 18 色）
 	unsorted := make([]*discordgo.MessageEmbedField, 18)
 	num := 0
 
-	for _, player := range dgs.GameData.PlayerData {
+	for _, player := range players {
 		if player.Color < 0 || player.Color > 17 {
-			break
+			continue
 		}
 
 		// 生存/死亡で別のクルー絵文字を取得
