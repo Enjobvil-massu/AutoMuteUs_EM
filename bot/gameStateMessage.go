@@ -220,13 +220,13 @@ func (dgs *GameState) CreateMessage(s *discordgo.Session, me *discordgo.MessageE
 		}
 
 		// 通常色はクルー絵文字、リンク解除は❌を表示する
-        if useCrewEmoji {
-	        btn.Emoji = opt.Emoji
-        } else {
-	        btn.Emoji = discordgo.ComponentEmoji{Name: X}
-        }
+		if useCrewEmoji {
+			btn.Emoji = opt.Emoji
+		} else {
+			btn.Emoji = discordgo.ComponentEmoji{Name: X}
+		}
 
-        curRow.Components = append(curRow.Components, btn)
+		curRow.Components = append(curRow.Components, btn)
 
 		// 5 個ごとに改行
 		if (idx+1)%maxPerRow == 0 {

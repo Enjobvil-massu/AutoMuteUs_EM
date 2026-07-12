@@ -36,24 +36,15 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
-      - name: Check Go formatting
+      - name: Check all tracked Go files are formatted
         shell: bash
         run: |
-          files=(
-            main.go
-            main_stability_test.go
-            bot/bot.go
-            bot/command/new.go
-            bot/command/enjobvil_new_regression_test.go
-            bot/discordGameState.go
-            bot/eventHandler.go
-            bot/helpers.go
-            bot/helpers_regression_test.go
-            bot/redis.go
-            bot/slash_commands.go
-            bot/stability_regression_test.go
-            bot/voice.go
-          )
+          mapfile -t files < <(git ls-files '*.go')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No tracked Go files were found."
+            exit 1
+          fi
+
           unformatted="$(gofmt -l "${files[@]}")"
           if [ -n "$unformatted" ]; then
             echo "The following files are not gofmt formatted:"
