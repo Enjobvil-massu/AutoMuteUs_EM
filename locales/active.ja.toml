@@ -62,6 +62,8 @@
 "locale.language.name" = "日本語"
 "processplayer.error" = "{{.User}} のミュート処理中にエラーが発生しました。{{.VoiceChannel}} でメンバーをミュート／スピーカーミュートする権限がBOTにあるか確認してください。"
 "responses.gameStatsEmbed.NoPremium" = "試合ごとの詳細な統計は AutoMuteUs プレミアムのユーザーのみ利用できます。詳細は `/premium` を入力してください。"
+"responses.gameStatsEmbed.LoadErrorDescription" = "一時的なデータエラーが発生しました。少し待ってからもう一度お試しください。"
+"responses.gameStatsEmbed.LoadErrorTitle" = "試合統計を取得できませんでした"
 "responses.guildStatsEmbed.CrewmateWins" = "クルーメイト勝率（{{.Min}} ゲーム以上）"
 "responses.guildStatsEmbed.Desc" = "{{.GuildName}} のギルド統計"
 "responses.guildStatsEmbed.GamesPlayed" = "ゲームプレイ回数"

@@ -62,6 +62,8 @@
 "locale.language.name" = "English"
 "processplayer.error" = "Error in muting or deafening {{.User}}. Does the bot have permissions to mute/deafen users in {{.VoiceChannel}}?"
 "responses.gameStatsEmbed.NoPremium" = "Detailed match stats are only available for AutoMuteUs Premium users; type `/premium` to learn more"
+"responses.gameStatsEmbed.LoadErrorDescription" = "A temporary data error occurred. Please wait a moment and try again."
+"responses.gameStatsEmbed.LoadErrorTitle" = "Unable to load match statistics"
 "responses.guildStatsEmbed.CrewmateWins" = "Crewmate Winrate ({{.Min}}+ Games)"
 "responses.guildStatsEmbed.Desc" = "Guild stats for {{.GuildName}}"
 "responses.guildStatsEmbed.GamesPlayed" = "Games Played"

@@ -914,19 +914,35 @@ func (bot *Bot) GameStatsEmbed(guildID, matchID, connectCode string, isPrem bool
 
 	gameData, err := bot.PostgresInterface.GetGame(guildID, connectCode, matchID)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Failed to load match data for guild %s / match %s:%s: %v", guildID, connectCode, matchID, err)
+		return gameStatsLoadErrorEmbed(sett)
 	}
 
 	var events []*storage.PostgresGameEvent
 	if gameData != nil {
 		events, err = bot.PostgresInterface.GetGameEvents(matchID)
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("Failed to load match events for guild %s / match %s:%s: %v", guildID, connectCode, matchID, err)
+			return gameStatsLoadErrorEmbed(sett)
 		}
 	}
 
 	stats := storage.StatsFromGameAndEvents(gameData, events)
 	return stats.ToDiscordEmbed(connectCode+":"+matchID, sett)
+}
+
+func gameStatsLoadErrorEmbed(sett *settings.GuildSettings) *discordgo.MessageEmbed {
+	return &discordgo.MessageEmbed{
+		Title: sett.LocalizeMessage(&i18n.Message{
+			ID:    "responses.gameStatsEmbed.LoadErrorTitle",
+			Other: "Unable to load match statistics",
+		}),
+		Description: sett.LocalizeMessage(&i18n.Message{
+			ID:    "responses.gameStatsEmbed.LoadErrorDescription",
+			Other: "A temporary data error occurred. Please wait a moment and try again.",
+		}),
+		Color: 15158332, // RED
+	}
 }
 
 func TrimEmbedFields(fields []*discordgo.MessageEmbedField) []*discordgo.MessageEmbedField {
