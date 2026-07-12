@@ -311,6 +311,7 @@ func (redisInterface *RedisInterface) DeleteDiscordGameState(dgs *GameState) {
 	connCode := dgs.ConnectCode
 	if guildID == "" || connCode == "" {
 		log.Println("Can't delete DGS with null guildID or null ConnCode")
+		return
 	}
 	data := redisInterface.getDiscordGameState(GameStateRequest{
 		GuildID:     guildID,
@@ -330,9 +331,11 @@ func (redisInterface *RedisInterface) DeleteDiscordGameState(dgs *GameState) {
 	})
 	switch {
 	case errors.Is(err, redislock.ErrNotObtained):
-		fmt.Println("Could not obtain lock!")
+		log.Printf("Could not obtain Redis lock while deleting game state for guild %s / code %s", guildID, connCode)
+		return
 	case err != nil:
-		log.Fatalln(err)
+		log.Printf("Failed to obtain Redis lock while deleting game state for guild %s / code %s: %v", guildID, connCode, err)
+		return
 	default:
 		defer lock.Release(ctx)
 	}
