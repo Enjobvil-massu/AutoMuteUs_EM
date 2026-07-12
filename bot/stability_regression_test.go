@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/automuteus/automuteus/v8/pkg/amongus"
+	"github.com/automuteus/automuteus/v8/pkg/settings"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -163,6 +164,38 @@ func TestIsCurrentSelfLinkPanel(t *testing.T) {
 	}
 	if isCurrentSelfLinkPanel(dgs, "message-1", "other-channel") {
 		t.Fatal("panel from another channel was accepted")
+	}
+}
+
+func TestIsCurrentStartControlGame(t *testing.T) {
+	dgs := NewDiscordGameState("guild-1")
+	dgs.ConnectCode = "ABC12345"
+
+	if !isCurrentStartControlGame(dgs, "ABC12345") {
+		t.Fatal("current /start control was rejected")
+	}
+	if !isCurrentStartControlGame(dgs, "abc12345") {
+		t.Fatal("current /start control with different letter case was rejected")
+	}
+	if isCurrentStartControlGame(dgs, "OLD12345") {
+		t.Fatal("stale /start control was accepted")
+	}
+	if isCurrentStartControlGame(dgs, "") {
+		t.Fatal("empty game code was accepted")
+	}
+	if isCurrentStartControlGame(nil, "ABC12345") {
+		t.Fatal("nil game state was accepted")
+	}
+}
+
+func TestLinkOrUnlinkRejectsNilGameState(t *testing.T) {
+	bot := &Bot{}
+	resp, success := bot.linkOrUnlinkAndRespond(nil, "user-1", "Red", settings.MakeGuildSettings())
+	if success {
+		t.Fatal("nil game state reported a successful link")
+	}
+	if resp == nil || resp.Data == nil || resp.Data.Content == "" {
+		t.Fatal("nil game state did not return a user-facing response")
 	}
 }
 
