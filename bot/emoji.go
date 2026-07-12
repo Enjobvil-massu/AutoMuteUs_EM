@@ -2,9 +2,12 @@ package bot
 
 import (
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/automuteus/automuteus/v8/pkg/game"
 
@@ -34,20 +37,44 @@ func (e *Emoji) GetDiscordCDNUrl() string {
 	return "https://cdn.discordapp.com/emojis/" + e.ID + ".png"
 }
 
-// DownloadAndBase64Encode does what it sounds like
-func (e *Emoji) DownloadAndBase64Encode() string {
-	url := e.GetDiscordCDNUrl()
-	response, err := http.Get(url)
+const maxEmojiDownloadBytes int64 = 2 * 1024 * 1024
+
+var emojiHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+// DownloadAndBase64Encode downloads an emoji image without allowing a network
+// error, non-success response, or unexpectedly large body to crash the bot.
+func (e *Emoji) DownloadAndBase64Encode() (string, error) {
+	return downloadAndBase64Encode(emojiHTTPClient, e.GetDiscordCDNUrl())
+}
+
+func downloadAndBase64Encode(client *http.Client, url string) (string, error) {
+	if client == nil {
+		return "", errors.New("emoji HTTP client is nil")
+	}
+
+	response, err := client.Get(url)
 	if err != nil {
-		log.Println(err)
+		return "", fmt.Errorf("download emoji from %s: %w", url, err)
 	}
 	defer response.Body.Close()
-	bytes, err := io.ReadAll(response.Body)
-	if err != nil {
-		log.Println(err)
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("download emoji from %s: unexpected HTTP status %s", url, response.Status)
 	}
-	encodedStr := base64.StdEncoding.EncodeToString(bytes)
-	return "data:image/png;base64," + encodedStr
+
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxEmojiDownloadBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read emoji from %s: %w", url, err)
+	}
+	if int64(len(data)) > maxEmojiDownloadBytes {
+		return "", fmt.Errorf("download emoji from %s: response exceeds %d bytes", url, maxEmojiDownloadBytes)
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("download emoji from %s: empty response body", url)
+	}
+
+	encodedStr := base64.StdEncoding.EncodeToString(data)
+	return "data:image/png;base64," + encodedStr, nil
 }
 
 func (a AlivenessEmojis) isEmpty() bool {
@@ -91,7 +118,11 @@ func (bot *Bot) verifyEmojis(s *discordgo.Session, guildID string, alive bool, s
 			}
 		}
 		if add && !alreadyExists {
-			b64 := emoji.DownloadAndBase64Encode()
+			b64, err := emoji.DownloadAndBase64Encode()
+			if err != nil {
+				log.Printf("Failed to download emoji %s: %v", emoji.Name, err)
+				continue
+			}
 			p := discordgo.EmojiParams{
 				Name:  emoji.Name,
 				Image: b64,
