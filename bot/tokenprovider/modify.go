@@ -57,16 +57,30 @@ func (tokenProvider *TokenProvider) attemptOnCaptureBot(guildID, connectCode str
 			log.Println(err)
 			return false
 		}
-		acked := make(chan bool)
-		// now we wait for an ack with respect to actually performing the mute
-		pubsub := tokenProvider.client.Subscribe(context.Background(), rediskey.CompleteTask(taskObj.TaskID))
-		err = tokenProvider.client.Publish(context.Background(), rediskey.TasksList(connectCode), jBytes).Err()
+		// Subscribe before publishing the task. go-redis Subscribe returns before
+		// Redis confirms the subscription, so Receive prevents a fast ACK from
+		// being missed between Subscribe and Publish.
+		ackContext, cancel := context.WithTimeout(context.Background(), tokenProvider.taskTimeoutMs)
+		defer cancel()
+
+		pubsub := tokenProvider.client.Subscribe(ackContext, rediskey.CompleteTask(taskObj.TaskID))
+		defer func() {
+			if closeErr := pubsub.Close(); closeErr != nil {
+				log.Printf("Error closing capture ACK subscription for task %s: %v", taskObj.TaskID, closeErr)
+			}
+		}()
+
+		if _, receiveErr := pubsub.Receive(ackContext); receiveErr != nil {
+			log.Printf("Unable to establish capture ACK subscription for task %s: %v", taskObj.TaskID, receiveErr)
+			return false
+		}
+
+		err = tokenProvider.client.Publish(ackContext, rediskey.TasksList(connectCode), jBytes).Err()
 		if err != nil {
 			log.Println("Error in publishing task to " + rediskey.TasksList(connectCode))
 			log.Println(err)
 		} else {
-			go tokenProvider.waitForAck(pubsub, acked)
-			res := <-acked
+			res := waitForAckMessage(pubsub.Channel(), tokenProvider.taskTimeoutMs)
 			if res {
 				log.Println("Successful mute/deafen using client capture bot!")
 
@@ -78,6 +92,7 @@ func (tokenProvider *TokenProvider) attemptOnCaptureBot(guildID, connectCode str
 				log.Printf("No ack from capture clients; blacklisting capture client for gamecode \"%s\" for %s\n", connectCode, UnresponsiveCaptureBlacklistDuration.String())
 			}
 		}
+
 	} else {
 		log.Println("Capture client is probably rate-limited. Deferring to main bot instead")
 	}
