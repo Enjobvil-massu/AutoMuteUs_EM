@@ -19,7 +19,7 @@ func containsJapaneseUI(value string) bool {
 }
 
 func TestManualLinkButtonsContainAll18ColorsAndJapaneseUnlink(t *testing.T) {
-	rows := linkColorButtons("starter", "target")
+	rows := linkColorButtons("starter", "target", "ABC12345")
 	colorButtons := 0
 	unlinkFound := false
 	for _, component := range rows {
@@ -34,9 +34,15 @@ func TestManualLinkButtonsContainAll18ColorsAndJapaneseUnlink(t *testing.T) {
 			}
 			if button.Label == "リンク解除" {
 				unlinkFound = true
+				if button.CustomID != "link-color:starter:target:ABC12345:UNLINK" {
+					t.Fatalf("unlink custom ID = %q", button.CustomID)
+				}
 				continue
 			}
 			colorButtons++
+			if !strings.Contains(button.CustomID, ":ABC12345:") {
+				t.Fatalf("manual link button does not contain the game code: %q", button.CustomID)
+			}
 			if !containsJapaneseUI(button.Label) {
 				t.Fatalf("manual link button is not Japanese: %q", button.Label)
 			}
@@ -58,12 +64,18 @@ func TestPublicUnlinkButtonLabelIsJapanese(t *testing.T) {
 }
 
 func TestStartControlButtonsAreJapanese(t *testing.T) {
-	components := stopButtonComponents("starter", &settings.GuildSettings{})
+	components := stopButtonComponents("starter", "ABC12345", &settings.GuildSettings{})
 	row := components[0].(discordgo.ActionsRow)
 	first := row.Components[0].(discordgo.Button)
 	second := row.Components[1].(discordgo.Button)
 	if first.Label != "手動リンク" || second.Label != "停止" {
 		t.Fatalf("button labels = %q, %q", first.Label, second.Label)
+	}
+	if first.CustomID != "link-game:starter:ABC12345" {
+		t.Fatalf("manual link custom ID = %q", first.CustomID)
+	}
+	if second.CustomID != "stop-game:starter:ABC12345" {
+		t.Fatalf("stop custom ID = %q", second.CustomID)
 	}
 }
 
