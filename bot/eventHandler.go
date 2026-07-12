@@ -350,6 +350,27 @@ func getWinners(dgs GameState, gameOver game.Gameover) []winnerRecord {
 	return winners
 }
 
+func finalizePlayerStateUpdate(
+	saveState func(),
+	refreshMessage func(),
+	dispatchMessage func(),
+	initialConnect bool,
+	dispatchRequested bool,
+) {
+	if saveState != nil {
+		saveState()
+	}
+	if initialConnect {
+		if refreshMessage != nil {
+			refreshMessage()
+		}
+		return
+	}
+	if dispatchRequested && dispatchMessage != nil {
+		dispatchMessage()
+	}
+}
+
 func (bot *Bot) processPlayer(sett *settings.GuildSettings, player game.Player, dgsRequest GameStateRequest) (bool, string, *GameState, error) {
 	var err error
 	if player.Name != "" {
@@ -369,12 +390,24 @@ func (bot *Bot) processPlayer(sett *settings.GuildSettings, player game.Player, 
 			dgs.LastCapturePing = time.Now().Unix()
 		}
 
-		// defer を拡張：保存してロック解除したあとに Refresh（ボタン付与）
+		// Save and release the Redis lock before refreshing or editing the Discord message.
+		// RefreshGameStateMessage obtains the same game-state lock, so invoking it while
+		// this lock is held would cause the refresh to fail.
+		dispatchAfterSave := false
 		defer func() {
-			bot.RedisInterface.SetDiscordGameState(dgs, lock)
-			if initialConnect {
-				go bot.RefreshGameStateMessage(dgsRequest, sett)
-			}
+			finalizePlayerStateUpdate(
+				func() {
+					bot.RedisInterface.SetDiscordGameState(dgs, lock)
+				},
+				func() {
+					go bot.RefreshGameStateMessage(dgsRequest, sett)
+				},
+				func() {
+					bot.DispatchRefreshOrEdit(dgs, dgsRequest, sett)
+				},
+				initialConnect,
+				dispatchAfterSave,
+			)
 		}()
 
 		if player.Disconnected || player.Action == game.LEFT {
@@ -398,7 +431,7 @@ func (bot *Bot) processPlayer(sett *settings.GuildSettings, player game.Player, 
 
 			// only update the message if we're not in the tasks phase (info leaks)
 			if dgs.GameData.GetPhase() != game.TASKS {
-				bot.DispatchRefreshOrEdit(dgs, dgsRequest, sett)
+				dispatchAfterSave = true
 			}
 
 			return true, userID, dgs, err
@@ -413,7 +446,7 @@ func (bot *Bot) processPlayer(sett *settings.GuildSettings, player game.Player, 
 				uids, err = bot.RedisInterface.GetUsernameOrUserIDMappings(dgs.GuildID, player.Name)
 				userID = dgs.AttemptPairingByUserIDs(data, uids)
 			}
-			bot.DispatchRefreshOrEdit(dgs, dgsRequest, sett)
+			dispatchAfterSave = true
 			return true, userID, dgs, err
 		case updated:
 			userID := dgs.AttemptPairingByMatchingNames(data)
@@ -424,13 +457,13 @@ func (bot *Bot) processPlayer(sett *settings.GuildSettings, player game.Player, 
 			}
 			if isAliveUpdated && dgs.GameData.GetPhase() == game.TASKS {
 				if sett.GetUnmuteDeadDuringTasks() || player.Action == game.EXILED {
-					bot.DispatchRefreshOrEdit(dgs, dgsRequest, sett)
+					dispatchAfterSave = true
 					return true, userID, dgs, err
 				}
 				log.Println("NOT updating the discord status message; would leak info")
 				return false, userID, dgs, err
 			}
-			bot.DispatchRefreshOrEdit(dgs, dgsRequest, sett)
+			dispatchAfterSave = true
 			if player.Action == game.EXILED {
 				return false, userID, dgs, err // don't apply a mute to this player
 			}
