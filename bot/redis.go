@@ -135,6 +135,18 @@ func (redisInterface RedisInterface) GetDiscordGameStateAndLockRetries(gsr GameS
 	return lock, state
 }
 
+func releaseLockForUnavailableState(state *GameState, release func() error) bool {
+	if state != nil {
+		return false
+	}
+	if release != nil {
+		if err := release(); err != nil {
+			log.Printf("Failed to release Redis game-state lock after state load failure: %v", err)
+		}
+	}
+	return true
+}
+
 func (redisInterface *RedisInterface) GetDiscordGameStateAndLock(gsr GameStateRequest) (*redislock.Lock, *GameState) {
 	key := redisInterface.getDiscordGameStateKey(gsr)
 	if key == "" {
@@ -154,7 +166,11 @@ func (redisInterface *RedisInterface) GetDiscordGameStateAndLock(gsr GameStateRe
 		return nil, nil
 	}
 
-	return lock, redisInterface.getDiscordGameState(gsr, true)
+	state := redisInterface.getDiscordGameState(gsr, true)
+	if releaseLockForUnavailableState(state, func() error { return lock.Release(ctx) }) {
+		return nil, nil
+	}
+	return lock, state
 }
 
 func (redisInterface *RedisInterface) getDiscordGameState(gsr GameStateRequest, createOnNil bool) *GameState {
