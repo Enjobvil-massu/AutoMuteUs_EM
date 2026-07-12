@@ -29,7 +29,7 @@ func TestStartSuccessResponseAndBottomMessageAreJapanese(t *testing.T) {
 		"ホスト",
 		"コード",
 		"AmongUsCaptureを起動・接続する",
-		"接続後に固まる場合は、AmongUsCaptureを再起動して再度〖登録〗を押してください。",
+		"接続後に固まる場合は、AmongUsCaptureを再起動して再度【登録】を押してください。",
 	}
 	for _, text := range required {
 		if !strings.Contains(resp.Data.Content, text) {
