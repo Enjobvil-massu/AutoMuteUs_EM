@@ -248,22 +248,18 @@ func (tokenProvider *TokenProvider) rateLimitEventCallback(sess *discordgo.Sessi
 	log.Println(rl.Message)
 }
 
-func (tokenProvider *TokenProvider) waitForAck(pubsub *redis.PubSub, result chan<- bool) {
-	t := time.NewTimer(tokenProvider.taskTimeoutMs)
-	defer pubsub.Close()
-	channel := pubsub.Channel()
+func waitForAckMessage(channel <-chan *redis.Message, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
-	for {
-		select {
-		case <-t.C:
-			t.Stop()
-			result <- false
-			return
-		case val := <-channel:
-			t.Stop()
-			result <- val.Payload == "true"
-			return
-		}
+	select {
+	case <-timer.C:
+		return false
+	case message, ok := <-channel:
+		// Redis can close a Pub/Sub channel during a restart or connection loss.
+		// A receive from a closed channel returns nil; treating it as a failed ACK
+		// prevents a nil-pointer panic from terminating the entire bot process.
+		return ok && message != nil && message.Payload == "true"
 	}
 }
 
