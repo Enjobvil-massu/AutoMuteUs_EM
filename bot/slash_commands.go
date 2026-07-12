@@ -52,29 +52,42 @@ const (
 	downloadCanceledID            = "download-canceled"
 
 	// ===== 追加: /stop ボタン用 =====
-	// CustomID: "stop-game:<starterUserID>"
+	// CustomID: "stop-game:<starterUserID>:<connectCode>"
 	stopButtonIDPrefix = "stop-game"
 
 	// ===== 追加: /link ボタン用 =====
-	// CustomID: "link-game:<starterUserID>"
+	// CustomID: "link-game:<starterUserID>:<connectCode>"
 	linkButtonIDPrefix = "link-game"
 
 	// ===== 追加: /link ユーザー選択用 =====
-	// CustomID: "link-select-user:<starterUserID>"
+	// CustomID: "link-select-user:<starterUserID>:<connectCode>"
 	linkUserSelectPrefix = "link-select-user"
 
 	// ===== 追加: /link 色選択ボタン用 =====
-	// CustomID: "link-color:<starterUserID>:<targetUserID>:<ColorName>"
+	// CustomID: "link-color:<starterUserID>:<targetUserID>:<connectCode>:<ColorName>"
 	linkColorButtonPrefix = "link-color"
 )
 
+const staleStartControlMessage = "この操作画面は古いため使用できません。現在実行中の /start 画面から操作してください。"
+
+// isCurrentStartControlGame prevents buttons left behind by a completed or
+// replaced /start session from controlling a newer game in the same channel.
+func isCurrentStartControlGame(dgs *GameState, connectCode string) bool {
+	if dgs == nil {
+		return false
+	}
+	expected := strings.TrimSpace(connectCode)
+	current := strings.TrimSpace(dgs.ConnectCode)
+	return expected != "" && current != "" && strings.EqualFold(current, expected)
+}
+
 // ===== 追加: /new(/start) のエフェメラルに付ける /link & /stop ボタン =====
-func stopButtonComponents(starterUserID string, sett *settings.GuildSettings) []discordgo.MessageComponent {
+func stopButtonComponents(starterUserID, connectCode string, sett *settings.GuildSettings) []discordgo.MessageComponent {
 	labelLink := "手動リンク"
 	labelStop := "停止"
 
-	stopID := fmt.Sprintf("%s:%s", stopButtonIDPrefix, starterUserID)
-	linkID := fmt.Sprintf("%s:%s", linkButtonIDPrefix, starterUserID)
+	stopID := fmt.Sprintf("%s:%s:%s", stopButtonIDPrefix, starterUserID, connectCode)
+	linkID := fmt.Sprintf("%s:%s:%s", linkButtonIDPrefix, starterUserID, connectCode)
 
 	return []discordgo.MessageComponent{
 		discordgo.ActionsRow{
@@ -99,7 +112,7 @@ func stopButtonComponents(starterUserID string, sett *settings.GuildSettings) []
 }
 
 // ===== 追加: /link 用 色ボタン生成ヘルパー =====
-func linkColorButtons(starterUserID, targetUserID string) []discordgo.MessageComponent {
+func linkColorButtons(starterUserID, targetUserID, connectCode string) []discordgo.MessageComponent {
 	// CustomIDに渡す内部値は従来どおり英語のまま維持し、表示だけ日本語化します。
 	colors := []string{
 		"Red", "Blue", "Green", "Pink", "Orange",
@@ -116,10 +129,11 @@ func linkColorButtons(starterUserID, targetUserID string) []discordgo.MessageCom
 
 		row.Components = append(row.Components, discordgo.Button{
 			CustomID: fmt.Sprintf(
-				"%s:%s:%s:%s",
+				"%s:%s:%s:%s:%s",
 				linkColorButtonPrefix,
 				starterUserID,
 				targetUserID,
+				connectCode,
 				color,
 			),
 			Style: discordgo.PrimaryButton,
@@ -137,10 +151,11 @@ func linkColorButtons(starterUserID, targetUserID string) []discordgo.MessageCom
 
 	row.Components = append(row.Components, discordgo.Button{
 		CustomID: fmt.Sprintf(
-			"%s:%s:%s:%s",
+			"%s:%s:%s:%s:%s",
 			linkColorButtonPrefix,
 			starterUserID,
 			targetUserID,
+			connectCode,
 			"UNLINK",
 		),
 		Style: discordgo.SecondaryButton,
@@ -395,6 +410,11 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				log.Printf("No lock could be obtained when linking for guild %s, channel %s\n", i.GuildID, i.ChannelID)
 				return command.DeadlockGameStateResponse(command.Link.Name, sett)
 			}
+			if dgs == nil {
+				bot.RedisInterface.SetDiscordGameState(nil, lock)
+				log.Printf("No game state was available when linking for guild %s, channel %s\n", i.GuildID, i.ChannelID)
+				return command.NoGameResponse(sett)
+			}
 			resp, success := bot.linkOrUnlinkAndRespond(dgs, userID, color, sett)
 			if success {
 				bot.RedisInterface.SetDiscordGameState(dgs, lock)
@@ -415,6 +435,11 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			if lock == nil {
 				log.Printf("No lock could be obtained when unlinking for guild %s, channel %s\n", i.GuildID, i.ChannelID)
 				return command.DeadlockGameStateResponse(command.Unlink.Name, sett)
+			}
+			if dgs == nil {
+				bot.RedisInterface.SetDiscordGameState(nil, lock)
+				log.Printf("No game state was available when unlinking for guild %s, channel %s\n", i.GuildID, i.ChannelID)
+				return command.NoGameResponse(sett)
 			}
 			resp, success := bot.linkOrUnlinkAndRespond(dgs, userID, "", sett)
 			if success {
@@ -486,7 +511,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 
 				if resp != nil && resp.Data != nil {
 					starterID := i.Member.User.ID
-					resp.Data.Components = append(resp.Data.Components, stopButtonComponents(starterID, sett)...)
+					resp.Data.Components = append(resp.Data.Components, stopButtonComponents(starterID, dgs.ConnectCode, sett)...)
 
 					// 念のためエフェメラル化（スクショの場所に出すため）
 					if resp.Data.Flags == 0 {
@@ -823,12 +848,13 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 		switch {
 		// ========= 追加: /link ボタン（起動者 → 対象ユーザー選択） =========
 		case strings.HasPrefix(customID, linkButtonIDPrefix):
-			// CustomID: "link-game:<starterUserID>"
-			parts := strings.SplitN(customID, ":", 2)
-			starterID := ""
-			if len(parts) == 2 {
-				starterID = parts[1]
+			// CustomID: "link-game:<starterUserID>:<connectCode>"
+			parts := strings.SplitN(customID, ":", 3)
+			if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+				return command.PrivateResponse(staleStartControlMessage)
 			}
+			starterID := parts[1]
+			connectCode := parts[2]
 
 			// 起動者以外は拒否（エフェメラルだが念のため）
 			if starterID != "" && i.Member != nil && i.Member.User != nil && i.Member.User.ID != starterID {
@@ -837,6 +863,11 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 					Other: "このボタンは /start（ゲーム開始）を実行した起動者のみ押せます。",
 				})
 				return command.PrivateResponse(msg)
+			}
+
+			currentGame := bot.RedisInterface.GetReadOnlyDiscordGameState(gsr)
+			if !isCurrentStartControlGame(currentGame, connectCode) {
+				return command.PrivateResponse(staleStartControlMessage)
 			}
 
 			// 起動者のいるボイスチャンネル取得
@@ -895,7 +926,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				return command.PrivateResponse(msg)
 			}
 
-			selectCustomID := fmt.Sprintf("%s:%s", linkUserSelectPrefix, starterID)
+			selectCustomID := fmt.Sprintf("%s:%s:%s", linkUserSelectPrefix, starterID, connectCode)
 
 			// ★★★ 修正ポイント: MinValues は *int なので変数を用意して & を渡す ★★★
 			min := 1
@@ -925,12 +956,13 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 
 		// ========= 追加: /link ユーザー選択後 → 色ボタン表示 =========
 		case strings.HasPrefix(customID, linkUserSelectPrefix):
-			// CustomID: "link-select-user:<starterUserID>"
-			parts := strings.SplitN(customID, ":", 2)
-			starterID := ""
-			if len(parts) == 2 {
-				starterID = parts[1]
+			// CustomID: "link-select-user:<starterUserID>:<connectCode>"
+			parts := strings.SplitN(customID, ":", 3)
+			if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+				return command.PrivateResponse(staleStartControlMessage)
 			}
+			starterID := parts[1]
+			connectCode := parts[2]
 
 			if starterID != "" && i.Member != nil && i.Member.User != nil && i.Member.User.ID != starterID {
 				msg := sett.LocalizeMessage(&i18n.Message{
@@ -938,6 +970,11 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 					Other: "この操作は /start（ゲーム開始）を実行した起動者のみ行えます。",
 				})
 				return command.PrivateResponse(msg)
+			}
+
+			currentGame := bot.RedisInterface.GetReadOnlyDiscordGameState(gsr)
+			if !isCurrentStartControlGame(currentGame, connectCode) {
+				return command.PrivateResponse(staleStartControlMessage)
 			}
 
 			values := i.MessageComponentData().Values
@@ -952,7 +989,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			targetUserID := values[0]
 
 			// 色ボタンを表示
-			components := linkColorButtons(starterID, targetUserID)
+			components := linkColorButtons(starterID, targetUserID, connectCode)
 
 			content := fmt.Sprintf("%s に割り当てる色を選択してください。", discord.MentionByUserID(targetUserID))
 
@@ -967,9 +1004,9 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 
 		// ========= 追加: /link 色ボタン → 実際にリンク処理 =========
 		case strings.HasPrefix(customID, linkColorButtonPrefix):
-			// CustomID: "link-color:<starterUserID>:<targetUserID>:<ColorName>"
-			parts := strings.SplitN(customID, ":", 4)
-			if len(parts) < 4 {
+			// CustomID: "link-color:<starterUserID>:<targetUserID>:<connectCode>:<ColorName>"
+			parts := strings.SplitN(customID, ":", 5)
+			if len(parts) != 5 || parts[1] == "" || parts[2] == "" || parts[3] == "" {
 				msg := sett.LocalizeMessage(&i18n.Message{
 					ID:    "commands.link.invalidColor",
 					Other: "リンク用のボタン情報が不正です。",
@@ -978,7 +1015,8 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			}
 			starterID := parts[1]
 			targetUserID := parts[2]
-			colorName := parts[3]
+			connectCode := parts[3]
+			colorName := parts[4]
 
 			if starterID != "" && i.Member != nil && i.Member.User != nil && i.Member.User.ID != starterID {
 				msg := sett.LocalizeMessage(&i18n.Message{
@@ -999,6 +1037,14 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				log.Printf("No lock could be obtained when linking for guild %s, channel %s\n", i.GuildID, i.ChannelID)
 				return command.DeadlockGameStateResponse(command.Link.Name, sett)
 			}
+			if dgs == nil {
+				bot.RedisInterface.SetDiscordGameState(nil, lock)
+				return command.NoGameResponse(sett)
+			}
+			if !isCurrentStartControlGame(dgs, connectCode) {
+				bot.RedisInterface.SetDiscordGameState(nil, lock)
+				return command.PrivateResponse(staleStartControlMessage)
+			}
 
 			// UNLINK なら色空文字、それ以外は指定色
 			value := colorName
@@ -1018,12 +1064,13 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 
 		// ========= 既存: /stop ボタン =========
 		case strings.HasPrefix(customID, stopButtonIDPrefix):
-			// CustomID: "stop-game:<starterUserID>"
-			parts := strings.SplitN(customID, ":", 2)
-			starterID := ""
-			if len(parts) == 2 {
-				starterID = parts[1]
+			// CustomID: "stop-game:<starterUserID>:<connectCode>"
+			parts := strings.SplitN(customID, ":", 3)
+			if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+				return command.PrivateResponse(staleStartControlMessage)
 			}
+			starterID := parts[1]
+			connectCode := parts[2]
 
 			// 起動者以外は拒否
 			if starterID != "" && i.Member != nil && i.Member.User != nil && i.Member.User.ID != starterID {
@@ -1041,6 +1088,9 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			}
 			dgs := bot.RedisInterface.GetReadOnlyDiscordGameState(gsr)
 			if dgs != nil {
+				if !isCurrentStartControlGame(dgs, connectCode) {
+					return command.PrivateResponse(staleStartControlMessage)
+				}
 				if !dgs.GameStateMsg.Exists() {
 					return command.NoGameResponse(sett)
 				}
@@ -1056,7 +1106,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				}
 				return command.PrivateResponse(ThumbsUp)
 			}
-			return command.DeadlockGameStateResponse(command.End.Name, sett)
+			return command.PrivateResponse(staleStartControlMessage)
 
 		// ========= 色ボタン（元からある自分用 select-color） =========
 		case strings.HasPrefix(customID, colorSelectID):
@@ -1377,6 +1427,9 @@ func downloadErrorResponse(sett *settings.GuildSettings, err error) *discordgo.I
 }
 
 func (bot *Bot) linkOrUnlinkAndRespond(dgs *GameState, userID, testValue string, sett *settings.GuildSettings) (*discordgo.InteractionResponse, bool) {
+	if dgs == nil {
+		return command.NoGameResponse(sett), false
+	}
 	if testValue != "" {
 		// don't care if it's successful, just always unlink before linking
 		unlinkPlayer(dgs, userID)
