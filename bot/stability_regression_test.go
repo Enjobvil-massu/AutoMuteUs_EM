@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -32,6 +33,48 @@ func TestChooseDiscordDisplayNamePriority(t *testing.T) {
 				t.Fatalf("chooseDiscordDisplayName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDiscordGuildMemberPayloadDisplayNames(t *testing.T) {
+	const memberJSON = `{
+		"nick": "サーバー表示名",
+		"user": {
+			"id": "123456789",
+			"username": "account_name",
+			"global_name": "Discord表示名"
+		}
+	}`
+
+	var payload discordGuildMemberPayload
+	if err := json.Unmarshal([]byte(memberJSON), &payload); err != nil {
+		t.Fatalf("failed to decode Discord guild member payload: %v", err)
+	}
+
+	if got, want := payload.Nick, "サーバー表示名"; got != want {
+		t.Fatalf("payload.Nick = %q, want %q", got, want)
+	}
+
+	if got, want := payload.User.ID, "123456789"; got != want {
+		t.Fatalf("payload.User.ID = %q, want %q", got, want)
+	}
+
+	if got, want := payload.User.Username, "account_name"; got != want {
+		t.Fatalf("payload.User.Username = %q, want %q", got, want)
+	}
+
+	if got, want := payload.User.GlobalName, "Discord表示名"; got != want {
+		t.Fatalf("payload.User.GlobalName = %q, want %q", got, want)
+	}
+
+	got := chooseDiscordDisplayName(
+		"",
+		payload.User.GlobalName,
+		payload.User.Username,
+		payload.User.ID,
+	)
+	if want := "Discord表示名"; got != want {
+		t.Fatalf("chooseDiscordDisplayName() = %q, want %q", got, want)
 	}
 }
 
