@@ -36,7 +36,6 @@ func TestChooseDiscordDisplayNamePriority(t *testing.T) {
 	}
 }
 
-// ↓ この位置に追加します
 func TestDiscordGuildMemberPayloadDisplayNames(t *testing.T) {
 	const memberJSON = `{
 		"nick": "サーバー表示名",
