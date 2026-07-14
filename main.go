@@ -74,10 +74,17 @@ func main() {
 	// connect code generation用の乱数を初期化します。
 	rand.Seed(time.Now().Unix())
 
-	if err := discordMainWrapper(); err != nil {
+	os.Exit(runMain(discordMainWrapper))
+}
+
+func runMain(runDiscord func() error) int {
+	if err := runDiscord(); err != nil {
 		log.Println("Program exited with the following error:")
 		log.Println(err)
+		return 1
 	}
+
+	return 0
 }
 
 func discordMainWrapper() error {
