@@ -16,11 +16,14 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Go for govulncheck installation
+      - name: Set up Go 1.25.12
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          go-version: '1.25.12'
           cache: false
+
+      - name: Show Go version
+        run: go version
 
       - name: Install govulncheck v1.1.4
         env:
@@ -28,15 +31,6 @@ jobs:
         run: |
           mkdir -p "$GOBIN"
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-
-      - name: Set up project Go version
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.19.x'
-          cache: false
-
-      - name: Show project Go version
-        run: go version
 
       - name: Download project modules
         run: go mod download
