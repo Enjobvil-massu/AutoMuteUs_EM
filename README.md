@@ -33,120 +33,88 @@
     </a>
 </p>
 
-# AutoMuteUs
+# AutoMuteUs_EM
 
-<div style="display: flex; align-item: center; justify: center;">
-<p style="">
-    <a href="https://add.automute.us"/>
-        <img src="assets/DiscordBot_Black.gif", width=150>
-    </a>
-</p>
-<div style="margin-left: 2%">
-AutoMuteUs is a Discord Bot to harness Among Us game data, and automatically mute/unmute players during games!
+AutoMuteUs_EMは、公式[AutoMuteUs](https://github.com/automuteus/automuteus)を元に、日本語表示、操作画面、AmongUsCapture接続案内、障害時の安全処理などを調整したカスタム版です。
 
-Requires [amonguscapture](https://github.com/automuteus/amonguscapture) to capture and relay game data.
+> [!IMPORTANT]
+> このリポジトリは公式AutoMuteUsの運営版ではありません。
+> 公式Botの招待リンクや公式サポートとは別に、自前のDocker環境で運用しています。
 
-Have any questions, concerns, bug reports, or just want to chat? Join our discord at https://discord.gg/ZkqZSWF!
+## 主な機能
 
-Click the "invite me" badge in the header to invite the bot to your server, or click the GIF on the left.
+- Among Usのゲーム状態に合わせたDiscordの自動ミュート・解除
+- ロビー、タスク、会議、ゲーム終了の状態追跡
+- 日本語のコマンド名、説明、案内メッセージ
+- AmongUsCaptureの起動・接続リンク
+- 手動接続用のホストと接続コード表示
+- 18色のプレイヤーリンクボタン
+- DiscordユーザーとAmong Usプレイヤーの手動リンク・解除
+- Discord表示名とAmong Us名の併記
+- VC退出・VC移動・ゲーム終了時のミュート解除処理
+- Redis、統計DB、Capture通信エラー時の安全処理
 
-All artwork for the bot has been generously provided by <a href=https://aspen-cyborg.tumblr.com/>Smiles</a>!
+## 必要なもの
 
+1. Discordのボイスチャンネル
+2. Among Us
+3. Windows用[AmongUsCapture](https://github.com/automuteus/amonguscapture/releases/latest)
+4. AutoMuteUs_EMが導入されたDiscordサーバー
 
-</div>
-</div>
+AmongUsCaptureが接続されていない場合、Among Usのゲーム状態を取得できないため、自動ミュートは動作しません。
 
-# ⚠️ Requirements ⚠️
+## 基本的な使い方
 
-1. You **must** run the [Capture application](https://github.com/automuteus/amonguscapture/releases/latest) on your
-   Windows PC for the bot to work! Any Among Us games that don't have a user running the capture software will **not
-   have automuting capabilities**!
-2. The [Capture application](https://github.com/automuteus/amonguscapture/releases) currently only supports the Steam,
-   Epic Games, itch.io, and Microsoft Store releases of the game, but **does not** support beta or cracked versions.
+1. Discordの対象ボイスチャンネルへ参加します。
+2. 対象テキストチャンネルで`/start`を実行します。
+3. 実行者だけに表示される「AmongUsCaptureを起動・接続する」を押します。
+4. 自動接続できない場合は、表示されたホストとコードをAmongUsCaptureへ手動入力します。
+5. Among Usでロビーを作成または参加します。
+6. 色ボタンまたは`/link`を使って、Discordユーザーとプレイヤーをリンクします。
+7. ゲーム終了後は`/stop`で追跡を終了します。
 
-# Quickstart and Demo (click the image):
+## 使用できるコマンド
 
-[![Quickstart](http://i3.ytimg.com/vi/VYx6kM1O4FM/hqdefault.jpg)](https://youtu.be/VYx6kM1O4FM)
+| コマンド | 説明 |
+|---|---|
+| `/help` | 使用方法とコマンド説明を表示します |
+| `/start` | 現在のチャンネルでオートミュートを開始します |
+| `/stop` | オートミュートとゲーム追跡を停止します |
+| `/link` | DiscordユーザーをAmong Us内の色へ手動リンクします |
+| `/unlink` | DiscordユーザーのAmong Usリンクを解除します |
+| `/settings` | サーバーごとのミュート設定を表示・変更します |
 
-# Usage and Commands
+## プレイヤーのリンク
 
-To start a bot game in the current channel, type the following slash command in Discord after inviting the bot:
+### 色ボタン
 
-```
-/new
-# Starts a game, and allows users to react to emojis to link to their in-game players
-```
+AmongUsCaptureからプレイヤー情報を取得すると、18色のリンクボタンが表示されます。
 
-The bot will send you a private reply with a link that is used to sync the capture software to your game. It will also have a link to download the latest version of the capture software, if you don't have it already.
+参加者は自分が使用している色のボタンを押して、DiscordアカウントとAmong Usプレイヤーをリンクします。
 
-If you want to view command usage or see the available options, type `/help` in your Discord channel.
+### 手動リンク
 
-## Commands
+色ボタンでリンクできない場合は、`/link`を使用します。
 
-| Command     | Description                                                                                                            | Example                  |
-|-------------|------------------------------------------------------------------------------------------------------------------------|--------------------------|
-| `/help`     | Print help info and command usage                                                                                      |                          |
-| `/start`    | Start a new game in the current text channel                                                                           |                          |
-| `/refresh`  | Remake the bot's status message entirely, in case it ends up too far up in the chat.                                   |                          |
-| `/pause`    | Pause the bot, and don't let it automute anyone until unpaused.                                                        |                          |
-| `/stop`     | End the game entirely, and stop tracking players. Unmutes all and resets state                                         |                          |
-| `/link`     | Manually link a discord user to their in-game color                                                                    | `/link @Soup cyan`       |
-| `/unlink`   | Manually unlink a player                                                                                               | `/unlink @Soup`          |
-| `/settings` | View and change settings for the bot, such as the command prefix or mute behavior                                      |                          |
-| `/privacy`  | View privacy and data collection information about the bot                                                             |                          |
-| `/info`     | View general info about the Bot                                                                                        |                          |
-| `/map`      | View an image of an in-game map in the text channel. Provide the name of the map, and if you want the detailed version | `/map skeld true`        |
-| `/stats`    | View detailed stats about Among Us games played on the current server, or by a specific player                         | `/stats user view @Soup` |
-| `/premium`  | View information about AutoMuteUs Premium, and the current premium status of your server                               |                          |
+指定する項目：
 
-# Privacy
+- `user`：リンクするDiscordユーザー
+- `color`：Among Usで使用している色
 
-You can view privacy and data collection details for the Official Bot [here](PRIVACY.md).
+### リンク解除
 
-# Localization
+間違ったユーザーや色へリンクした場合は、`/unlink`を使用します。
 
-AutoMuteUs now uses [CrowdIn](https://crowdin.com/) for Localization and translations (thanks @MatadorProBr)!
+## Discord表示名
 
-Help us translate the bot here:
+プレイヤー一覧では、基本的に次の順序でDiscord表示名を選択します。
 
-[![Crowdin](https://badges.crowdin.net/e/5eb1365b5fd16082e63cc54c33736adc/localized.svg)](https://automuteus.crowdin.com/automuteus)
+1. Discordサーバー内のニックネーム
+2. Discordのグローバル表示名
+3. Discordアカウント名
+4. DiscordユーザーID
 
-To prepare any new strings for translation, first install goi18n v2.1.1 using the following command:
-```
-go install -v github.com/nicksnyder/go-i18n/v2/goi18n@v2.1.1
-```
+表示例：
 
-Then run the following command anytime new strings or translations are added:
-
-```
-goi18n extract -outdir locales
-```
-
-# Self-Hosting
-
-Self-hosting requires robust knowledge and troubleshooting capability for Docker/Docker-compose, unRAID, Heroku, and/or any other networking and routing config specific to your hosting solution.
-
-As such, **we recommend that the majority of users take advantage of our Verified bot**. The link to invite our bot can
-be found here:
-
-<a href="https://add.automute.us" alt="invite">
-        <img alt="Invite Link" src="https://img.shields.io/static/v1?label=bot&message=invite%20me&color=purple">
-    </a>
-
-If you are certain that you would prefer to self-host the bot, please follow any of the instructions on [automuteus/deploy](https://github.com/automuteus/deploy).
-
-# Developing
-
-Please refer to the instructions on [automuteus/deploy](https://github.com/automuteus/deploy).
-
-# Similar Projects
-
-- [Imposter](https://github.com/molenzwiebel/Impostor): Similar bot that uses private Discord channels instead of mute/deafen. Also uses a dummy player joining the game and "spectating" to get game information; no capture needed (although loses the 10th player slot).
-
-- [AmongUsBot](https://github.com/alpharaoh/AmongUsBot): Without their original Python program
-  with a lot of the OCR/Discord functionality, I never would have even thought of this idea! **Not currently maintained**
-
-- [amongcord](https://github.com/pedrofracassi/amongcord): A great program for tracking player status and auto mute/unmute in Among Us.
-  Their project works like a traditional Discord bot; very easy installation!
-
-- [Silence Among Us](https://github.com/tanndev/silence-among-us#silence-among-us): Another bot quite similar to this one, which also uses AmongUsCapture. Now in early-access with a publicly-hosted instance!
+```text
+Among Us名（Discord表示名）
