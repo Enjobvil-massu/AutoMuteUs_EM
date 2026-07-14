@@ -143,7 +143,7 @@ func (dgs *GameState) checkCacheAndAddUser(g *discordgo.Guild, s *discordgo.Sess
 		"GET",
 		endpoint,
 		nil,
-		discordgo.EndpointGuildMembers(g.ID),
+		discordgo.EndpointGuildMember(g.ID, ""),
 	)
 	if err != nil {
 		log.Println(err)
