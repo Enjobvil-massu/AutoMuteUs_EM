@@ -138,16 +138,46 @@ func (dgs *GameState) checkCacheAndAddUser(g *discordgo.Guild, s *discordgo.Sess
 	}
 
 	// ===== 2. API で取得（キャッシュに無い場合） =====
-	mem, err := s.GuildMember(g.ID, userID)
+	endpoint := discordgo.EndpointGuildMember(g.ID, userID)
+	body, err := s.RequestWithBucketID(
+		"GET",
+		endpoint,
+		nil,
+		discordgo.EndpointGuildMembers(g.ID),
+	)
 	if err != nil {
 		log.Println(err)
 		return UserData{}, false
 	}
 
-	user := MakeUserDataFromDiscordUser(mem.User, mem.Nick)
-	dgs.UserData[mem.User.ID] = user
+	var payload discordGuildMemberPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Println(err)
+		return UserData{}, false
+	}
 
-	dgs.cacheDisplayName(s, g.ID, mem.User.ID, mem.Nick, mem.User.Username)
+	// Discord応答にIDがない場合でも、要求時のIDをフォールバックに使用します。
+	if payload.User.ID == "" {
+		payload.User.ID = userID
+	}
+
+	discordUser := &discordgo.User{
+		ID:       payload.User.ID,
+		Username: payload.User.Username,
+	}
+
+	user := MakeUserDataFromDiscordUser(discordUser, payload.Nick)
+	dgs.UserData[payload.User.ID] = user
+
+	if dgs.DisplayNames == nil {
+		dgs.DisplayNames = map[string]string{}
+	}
+	dgs.DisplayNames[payload.User.ID] = chooseDiscordDisplayName(
+		payload.Nick,
+		payload.User.GlobalName,
+		payload.User.Username,
+		payload.User.ID,
+	)
 
 	return user, true
 }
