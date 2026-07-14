@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/automuteus/automuteus/v8/pkg/premium"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"strconv"
 	"time"
