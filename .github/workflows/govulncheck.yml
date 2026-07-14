@@ -1,0 +1,46 @@
+name: Manual govulncheck scan
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: Scan Go vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Go for govulncheck installation
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+
+      - name: Install govulncheck v1.1.4
+        env:
+          GOBIN: ${{ runner.temp }}/govulncheck-bin
+        run: |
+          mkdir -p "$GOBIN"
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
+      - name: Set up project Go version
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.19.x'
+          cache: false
+
+      - name: Show project Go version
+        run: go version
+
+      - name: Download project modules
+        run: go mod download
+
+      - name: Run govulncheck
+        run: |
+          "${{ runner.temp }}/govulncheck-bin/govulncheck" ./...
