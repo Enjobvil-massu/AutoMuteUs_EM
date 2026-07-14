@@ -25,12 +25,12 @@ jobs:
       - name: Show Go version
         run: go version
 
-      - name: Install govulncheck v1.6.0
+      - name: Install govulncheck v1.1.4
         env:
           GOBIN: ${{ runner.temp }}/govulncheck-bin
         run: |
           mkdir -p "$GOBIN"
-          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Download project modules
         run: go mod download
