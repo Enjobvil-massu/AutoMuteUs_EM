@@ -1,12 +1,18 @@
 package server
 
 import (
-	"github.com/gorilla/mux"
 	"log"
 	"net/http"
+	"time"
+
+	"github.com/gorilla/mux"
 )
 
 var GlobalReady = false
+
+var healthCheckHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
 
 func StartHealthCheckServer(port string) {
 	r := mux.NewRouter()
@@ -18,7 +24,7 @@ func StartHealthCheckServer(port string) {
 
 	r.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		if GlobalReady {
-			resp, err := http.Get("https://discordapp.com/api/v8/gateway")
+			resp, err := healthCheckHTTPClient.Get("https://discordapp.com/api/v8/gateway")
 			if err != nil {
 				log.Println(err)
 				w.WriteHeader(http.StatusInternalServerError)
@@ -26,6 +32,7 @@ func StartHealthCheckServer(port string) {
 				return
 			}
 			defer resp.Body.Close()
+
 			w.WriteHeader(resp.StatusCode)
 			if resp.StatusCode == http.StatusOK {
 				w.Write([]byte("ready"))
