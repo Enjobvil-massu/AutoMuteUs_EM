@@ -51,6 +51,8 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      - name: Run go vet
+        run: go vet ./...
 
       - name: Run all Go tests
         run: go test ./...
