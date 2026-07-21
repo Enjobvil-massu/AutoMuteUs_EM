@@ -65,17 +65,33 @@ func TestPublicUnlinkButtonLabelIsJapanese(t *testing.T) {
 
 func TestStartControlButtonsAreJapanese(t *testing.T) {
 	components := stopButtonComponents("starter", "ABC12345", &settings.GuildSettings{})
-	row := components[0].(discordgo.ActionsRow)
-	first := row.Components[0].(discordgo.Button)
-	second := row.Components[1].(discordgo.Button)
-	if first.Label != "手動リンク" || second.Label != "停止" {
-		t.Fatalf("button labels = %q, %q", first.Label, second.Label)
+	if len(components) != 1 {
+		t.Fatalf("start control rows = %d, want 1", len(components))
 	}
-	if first.CustomID != "link-game:starter:ABC12345" {
-		t.Fatalf("manual link custom ID = %q", first.CustomID)
+
+	row, ok := components[0].(discordgo.ActionsRow)
+	if !ok {
+		t.Fatalf("component was %T, want ActionsRow", components[0])
 	}
-	if second.CustomID != "stop-game:starter:ABC12345" {
-		t.Fatalf("stop custom ID = %q", second.CustomID)
+	if len(row.Components) != 3 {
+		t.Fatalf("start control buttons = %d, want 3", len(row.Components))
+	}
+
+	manualLink := row.Components[0].(discordgo.Button)
+	refresh := row.Components[1].(discordgo.Button)
+	stop := row.Components[2].(discordgo.Button)
+
+	if manualLink.Label != "ホストによる手動リンク" || refresh.Label != "更新" || stop.Label != "停止" {
+		t.Fatalf("button labels = %q, %q, %q", manualLink.Label, refresh.Label, stop.Label)
+	}
+	if manualLink.CustomID != "link-game:starter:ABC12345" {
+		t.Fatalf("manual link custom ID = %q", manualLink.CustomID)
+	}
+	if refresh.CustomID != "refresh-game:starter:ABC12345" {
+		t.Fatalf("refresh custom ID = %q", refresh.CustomID)
+	}
+	if stop.CustomID != "stop-game:starter:ABC12345" {
+		t.Fatalf("stop custom ID = %q", stop.CustomID)
 	}
 }
 
