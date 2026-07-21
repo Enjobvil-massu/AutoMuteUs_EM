@@ -59,6 +59,10 @@ const (
 	// CustomID: "link-game:<starterUserID>:<connectCode>"
 	linkButtonIDPrefix = "link-game"
 
+	// ===== 追加: 表示更新ボタン用 =====
+	// CustomID: "refresh-game:<starterUserID>:<connectCode>"
+	refreshButtonIDPrefix = "refresh-game"
+
 	// ===== 追加: /link ユーザー選択用 =====
 	// CustomID: "link-select-user:<starterUserID>:<connectCode>"
 	linkUserSelectPrefix = "link-select-user"
@@ -81,23 +85,32 @@ func isCurrentStartControlGame(dgs *GameState, connectCode string) bool {
 	return expected != "" && current != "" && strings.EqualFold(current, expected)
 }
 
-// ===== 追加: /new(/start) のエフェメラルに付ける /link & /stop ボタン =====
+// ===== 追加: /new(/start) の操作ボタン =====
 func stopButtonComponents(starterUserID, connectCode string, sett *settings.GuildSettings) []discordgo.MessageComponent {
-	labelLink := "手動リンク"
+	labelLink := "ホストによる手動リンク"
+	labelRefresh := "更新"
 	labelStop := "停止"
 
 	stopID := fmt.Sprintf("%s:%s:%s", stopButtonIDPrefix, starterUserID, connectCode)
 	linkID := fmt.Sprintf("%s:%s:%s", linkButtonIDPrefix, starterUserID, connectCode)
+	refreshID := fmt.Sprintf("%s:%s:%s", refreshButtonIDPrefix, starterUserID, connectCode)
 
 	return []discordgo.MessageComponent{
 		discordgo.ActionsRow{
 			Components: []discordgo.MessageComponent{
-				// 左側: /link ボタン
+				// 左側: ホストによる手動リンク
 				discordgo.Button{
 					CustomID: linkID,
 					Style:    discordgo.SuccessButton,
 					Label:    labelLink,
 					Emoji:    discordgo.ComponentEmoji{Name: "👉"},
+				},
+				// 中央: 公開ゲーム状態メッセージを作り直す
+				discordgo.Button{
+					CustomID: refreshID,
+					Style:    discordgo.PrimaryButton,
+					Label:    labelRefresh,
+					Emoji:    discordgo.ComponentEmoji{Name: "🔄"},
 				},
 				// 右側: /stop ボタン
 				discordgo.Button{
@@ -1061,6 +1074,38 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				bot.RedisInterface.SetDiscordGameState(nil, lock)
 			}
 			return resp
+
+		// ========= 追加: 表示更新ボタン =========
+		case strings.HasPrefix(customID, refreshButtonIDPrefix):
+			// CustomID: "refresh-game:<starterUserID>:<connectCode>"
+			parts := strings.SplitN(customID, ":", 3)
+			if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+				return command.PrivateResponse(staleStartControlMessage)
+			}
+			starterID := parts[1]
+			connectCode := parts[2]
+
+			// 誤操作や連打を避けるため、/start の起動者だけが更新できます。
+			if starterID != "" && i.Member != nil && i.Member.User != nil && i.Member.User.ID != starterID {
+				return command.PrivateResponse("このボタンは /start（ゲーム開始）を実行した起動者のみ押せます。")
+			}
+
+			gsr := GameStateRequest{
+				GuildID:     i.GuildID,
+				TextChannel: i.ChannelID,
+			}
+			currentGame := bot.RedisInterface.GetReadOnlyDiscordGameState(gsr)
+			if !isCurrentStartControlGame(currentGame, connectCode) {
+				return command.PrivateResponse(staleStartControlMessage)
+			}
+			if !currentGame.GameStateMsg.Exists() {
+				return command.NoGameResponse(sett)
+			}
+
+			if bot.RefreshGameStateMessage(gsr, sett) {
+				return command.PrivateResponse("✅ 表示を更新しました。")
+			}
+			return command.PrivateResponse("表示を更新できませんでした。少し待ってからもう一度お試しください。")
 
 		// ========= 既存: /stop ボタン =========
 		case strings.HasPrefix(customID, stopButtonIDPrefix):
