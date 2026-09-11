@@ -1,6 +1,6 @@
 module github.com/automuteus/automuteus/v8
 
-go 1.25.0
+go 1.27
 
 require (
 	github.com/BurntSushi/toml v1.1.0

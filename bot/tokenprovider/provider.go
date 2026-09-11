@@ -77,6 +77,9 @@ func (tokenProvider *TokenProvider) openAndStartSessionWithToken(botToken string
 			log.Println(err)
 			return false
 		}
+		// From upstream 8.5.0: workers use REST for mute/deafen and membership checks.
+		// Disable the full guild cache to reduce memory; Ready still populates State.User.
+		sess.StateEnabled = false
 		sess.Identify.Intents = discordgo.MakeIntent(discordgo.IntentsGuilds)
 		err = sess.Open()
 		if err != nil {
