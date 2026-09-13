@@ -522,6 +522,86 @@ func refreshHostTalkVoiceMembers(
 	return refreshed
 }
 
+// hostTalkVoiceEventInput is the immutable decision snapshot for one Discord
+// voice-state event. MemberKnown must come from current Discord member data;
+// callers must never infer human/bot identity from AutoMuteUs UserData.
+type hostTalkVoiceEventInput struct {
+	HostTalkMode          bool
+	LeaderID              string
+	UserID                string
+	MemberKnown           bool
+	IsBot                 bool
+	InTrackedVoiceChannel bool
+	NormalApplicable      bool
+	NormalMute            bool
+	NormalDeaf            bool
+	WasHostTalkManaged    bool
+}
+
+// hostTalkVoiceEventPlan tells the event adapter whether HostTalk owns this
+// event. Handled=true with Apply=false is deliberate fail-closed behavior:
+// the runtime must not fall through to normal AutoMute for an unknown member
+// or bot while an active HostTalk override owns that tracked-VC event.
+type hostTalkVoiceEventPlan struct {
+	Handled                       bool
+	Apply                         bool
+	Mute                          bool
+	Deaf                          bool
+	ManagedAfterSuccess           bool
+	ExpectedInTrackedVoiceChannel bool
+}
+
+// planHostTalkVoiceEvent chooses HostTalk ownership and the desired state for
+// one current Discord voice-state snapshot. It performs no Discord request and
+// no Redis mutation.
+//
+// HostTalk owns:
+//   - active HostTalk override events inside the tracked VC; and
+//   - cleanup/reconciliation for users previously recorded as HostTalk-managed.
+//
+// Everything else remains on the existing normal AutoMute event path.
+func planHostTalkVoiceEvent(input hostTalkVoiceEventInput) hostTalkVoiceEventPlan {
+	activeOverride := input.HostTalkMode &&
+		input.InTrackedVoiceChannel &&
+		input.LeaderID != ""
+
+	if !activeOverride && !input.WasHostTalkManaged {
+		return hostTalkVoiceEventPlan{}
+	}
+
+	result := hostTalkVoiceEventPlan{
+		Handled:                       true,
+		ExpectedInTrackedVoiceChannel: input.InTrackedVoiceChannel,
+	}
+
+	if !input.MemberKnown || input.IsBot {
+		return result
+	}
+
+	decision := decideGameVoiceState(hostTalkVoiceInput{
+		HostTalkMode:          input.HostTalkMode,
+		LeaderID:              input.LeaderID,
+		UserID:                input.UserID,
+		IsBot:                 input.IsBot,
+		InTrackedVoiceChannel: input.InTrackedVoiceChannel,
+		NormalApplicable:      input.NormalApplicable,
+		NormalMute:            input.NormalMute,
+		NormalDeaf:            input.NormalDeaf,
+		WasHostTalkManaged:    input.WasHostTalkManaged,
+	})
+
+	if !decision.Apply {
+		return result
+	}
+
+	result.Apply = true
+	result.Mute = decision.Mute
+	result.Deaf = decision.Deaf
+	result.ManagedAfterSuccess = decision.ManagedAfterSuccess
+
+	return result
+}
+
 type hostTalkVoiceInput struct {
 	HostTalkMode          bool
 	LeaderID              string
