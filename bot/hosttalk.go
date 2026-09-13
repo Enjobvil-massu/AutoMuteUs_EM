@@ -3,6 +3,7 @@ package bot
 import (
 	"errors"
 
+	"github.com/automuteus/automuteus/v8/pkg/game"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -10,6 +11,7 @@ var errHostTalkRevisionOverflow = errors.New("host talk revision exhausted")
 var errHostTalkGameStateUnavailable = errors.New("host talk game state unavailable")
 var errHostTalkLockUnavailable = errors.New("host talk game-state lock unavailable")
 var errHostTalkPersistFailed = errors.New("host talk game-state persistence failed")
+var errHostTalkVoiceSnapshotStale = errors.New("host talk voice snapshot stale")
 
 // isHostTalkAuthorized uses Discord identity and permissions, not EM bot-admin settings.
 // The caller is responsible for obtaining permissions for this user in the correct guild.
@@ -120,6 +122,123 @@ func hostTalkVoiceStateMatches(current *GameState, expectedGuildID, expectedConn
 
 // hostTalkVoiceMember is a pure snapshot of the information required to plan one member.
 // Discord lookup, actual mute-state comparison, sending, and persistence remain outside this layer.
+// hostTalkVoiceRecord represents a voice state that is known to have been applied successfully,
+// or was already observed in that exact state by Discord.
+type hostTalkVoiceRecord struct {
+	UserID              string
+	Mute                bool
+	Deaf                bool
+	ManagedAfterSuccess bool
+}
+
+// planHostTalkSuccessfulVoiceRecord creates a detached candidate state after successful voice application.
+// It refuses to record stale work and never mutates current or its maps.
+func planHostTalkSuccessfulVoiceRecord(
+	current *GameState,
+	expectedGuildID string,
+	expectedConnectCode string,
+	expectedPhase game.Phase,
+	expectedMode bool,
+	expectedRevision uint64,
+	records []hostTalkVoiceRecord,
+) (*GameState, bool, error) {
+	if current == nil ||
+		!current.Running ||
+		current.GameData.GetPhase() != expectedPhase ||
+		!hostTalkVoiceStateMatches(
+			current,
+			expectedGuildID,
+			expectedConnectCode,
+			expectedMode,
+			expectedRevision,
+		) {
+		return current, false, errHostTalkVoiceSnapshotStale
+	}
+
+	candidate := *current
+	candidate.GameStateMsg = current.GameStateMsg
+
+	candidate.UserData = make(UserDataSet, len(current.UserData))
+	for userID, userData := range current.UserData {
+		candidate.UserData[userID] = userData
+	}
+
+	if current.GameStateMsg.HostTalkManagedUsers != nil {
+		candidate.GameStateMsg.HostTalkManagedUsers = make(map[string]bool, len(current.GameStateMsg.HostTalkManagedUsers))
+		for userID, managed := range current.GameStateMsg.HostTalkManagedUsers {
+			candidate.GameStateMsg.HostTalkManagedUsers[userID] = managed
+		}
+	}
+
+	changed := false
+	for _, record := range records {
+		if record.UserID == "" {
+			continue
+		}
+
+		if userData, ok := candidate.UserData[record.UserID]; ok {
+			if userData.ShouldBeMute != record.Mute || userData.ShouldBeDeaf != record.Deaf {
+				userData.SetShouldBeMuteDeaf(record.Mute, record.Deaf)
+				candidate.UserData[record.UserID] = userData
+				changed = true
+			}
+		}
+
+		if record.ManagedAfterSuccess {
+			if candidate.GameStateMsg.HostTalkManagedUsers == nil {
+				candidate.GameStateMsg.HostTalkManagedUsers = map[string]bool{}
+			}
+			if !candidate.GameStateMsg.HostTalkManagedUsers[record.UserID] {
+				candidate.GameStateMsg.HostTalkManagedUsers[record.UserID] = true
+				changed = true
+			}
+		} else if candidate.GameStateMsg.HostTalkManagedUsers != nil {
+			if candidate.GameStateMsg.HostTalkManagedUsers[record.UserID] {
+				delete(candidate.GameStateMsg.HostTalkManagedUsers, record.UserID)
+				changed = true
+			}
+		}
+	}
+
+	return &candidate, changed, nil
+}
+
+// commitHostTalkSuccessfulVoiceRecord persists successful HostTalk bookkeeping before exposing it.
+// Persistence failure returns the original state so callers never treat an unsaved candidate as committed.
+func commitHostTalkSuccessfulVoiceRecord(
+	current *GameState,
+	expectedGuildID string,
+	expectedConnectCode string,
+	expectedPhase game.Phase,
+	expectedMode bool,
+	expectedRevision uint64,
+	records []hostTalkVoiceRecord,
+	persist func(*GameState) error,
+) (*GameState, bool, error) {
+	candidate, changed, err := planHostTalkSuccessfulVoiceRecord(
+		current,
+		expectedGuildID,
+		expectedConnectCode,
+		expectedPhase,
+		expectedMode,
+		expectedRevision,
+		records,
+	)
+	if err != nil {
+		return current, false, err
+	}
+	if !changed {
+		return current, false, nil
+	}
+	if persist == nil {
+		return current, false, errHostTalkPersistFailed
+	}
+	if err := persist(candidate); err != nil {
+		return current, false, errors.Join(errHostTalkPersistFailed, err)
+	}
+	return candidate, true, nil
+}
+
 type hostTalkVoiceMember struct {
 	UserID                string
 	IsBot                 bool
