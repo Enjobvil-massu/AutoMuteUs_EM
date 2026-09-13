@@ -64,6 +64,18 @@ func GuildTokenLock(guildID, hToken string) string {
 	return "automuteus:muterequest:lock:" + hToken + ":" + guildID
 }
 
+// MuteBlacklist marks a token (or the capture client, keyed by connect code) as unusable for mute/deafen requests in a
+// guild until the key expires.
+func MuteBlacklist(guildID, hToken string) string {
+	return "automuteus:muterequest:blacklist:" + hToken + ":" + guildID
+}
+
+// CaptureMuteReady is set by Galactus while a capture client that can apply mutes itself is connected for a connect
+// code. The bot only sends mute tasks to the capture client when this key exists.
+func CaptureMuteReady(connectCode string) string {
+	return "automuteus:capture:muteready:" + connectCode
+}
+
 func CachedUserInfoOnGuild(userID, guildID string) string {
 	return "automuteus:cache:userinfo:" + guildID + ":" + userID
 }
