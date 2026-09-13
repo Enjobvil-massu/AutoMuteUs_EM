@@ -125,10 +125,11 @@ func hostTalkVoiceStateMatches(current *GameState, expectedGuildID, expectedConn
 // hostTalkVoiceRecord represents a voice state that is known to have been applied successfully,
 // or was already observed in that exact state by Discord.
 type hostTalkVoiceRecord struct {
-	UserID              string
-	Mute                bool
-	Deaf                bool
-	ManagedAfterSuccess bool
+	UserID                        string
+	Mute                          bool
+	Deaf                          bool
+	ManagedAfterSuccess           bool
+	ExpectedInTrackedVoiceChannel bool
 }
 
 // planHostTalkSuccessfulVoiceRecord creates a detached candidate state after successful voice application.
@@ -237,6 +238,163 @@ func commitHostTalkSuccessfulVoiceRecord(
 		return current, false, errors.Join(errHostTalkPersistFailed, err)
 	}
 	return candidate, true, nil
+}
+
+// hostTalkVoiceObservation is a current Discord voice/member snapshot.
+// Unknown guild members are deliberately omitted so HostTalk never assumes an unknown account is human.
+type hostTalkVoiceObservation struct {
+	UserID                string
+	IsBot                 bool
+	InTrackedVoiceChannel bool
+	Mute                  bool
+	Deaf                  bool
+}
+
+// hostTalkPendingVoicePlan keeps the VC location that was validated immediately before a Discord change.
+type hostTalkPendingVoicePlan struct {
+	Plan                          hostTalkVoicePlan
+	ExpectedInTrackedVoiceChannel bool
+}
+
+// observeHostTalkGuildVoiceMembers captures only voice users whose Discord member identity is known.
+// This fail-closed behavior prevents accidentally muting a bot when member information is unavailable.
+func observeHostTalkGuildVoiceMembers(guild *discordgo.Guild, trackedVoiceChannelID string) map[string]hostTalkVoiceObservation {
+	observations := map[string]hostTalkVoiceObservation{}
+	if guild == nil {
+		return observations
+	}
+
+	botByUserID := make(map[string]bool, len(guild.Members))
+	for _, member := range guild.Members {
+		if member == nil || member.User == nil || member.User.ID == "" {
+			continue
+		}
+		botByUserID[member.User.ID] = member.User.Bot
+	}
+
+	for _, voiceState := range guild.VoiceStates {
+		if voiceState == nil || voiceState.UserID == "" {
+			continue
+		}
+		isBot, known := botByUserID[voiceState.UserID]
+		if !known {
+			continue
+		}
+		observations[voiceState.UserID] = hostTalkVoiceObservation{
+			UserID:                voiceState.UserID,
+			IsBot:                 isBot,
+			InTrackedVoiceChannel: voiceState.ChannelID != "" && voiceState.ChannelID == trackedVoiceChannelID,
+			Mute:                  voiceState.Mute,
+			Deaf:                  voiceState.Deaf,
+		}
+	}
+
+	return observations
+}
+
+func hostTalkVoiceRecordForPlan(plan hostTalkVoicePlan, expectedInTrackedVoiceChannel bool) hostTalkVoiceRecord {
+	return hostTalkVoiceRecord{
+		UserID:                        plan.UserID,
+		Mute:                          plan.Mute,
+		Deaf:                          plan.Deaf,
+		ManagedAfterSuccess:           plan.ManagedAfterSuccess,
+		ExpectedInTrackedVoiceChannel: expectedInTrackedVoiceChannel,
+	}
+}
+
+// partitionHostTalkVoicePlans separates states already observed on Discord from states requiring a request.
+// Bots and users without a current known voice/member observation are skipped fail-closed.
+func partitionHostTalkVoicePlans(
+	plans []hostTalkVoicePlan,
+	observations map[string]hostTalkVoiceObservation,
+) ([]hostTalkVoiceRecord, []hostTalkPendingVoicePlan) {
+	alreadyApplied := make([]hostTalkVoiceRecord, 0, len(plans))
+	pending := make([]hostTalkPendingVoicePlan, 0, len(plans))
+
+	for _, plan := range plans {
+		observation, ok := observations[plan.UserID]
+		if !ok || observation.IsBot {
+			continue
+		}
+
+		if observation.Mute == plan.Mute && observation.Deaf == plan.Deaf {
+			alreadyApplied = append(
+				alreadyApplied,
+				hostTalkVoiceRecordForPlan(plan, observation.InTrackedVoiceChannel),
+			)
+			continue
+		}
+
+		pending = append(pending, hostTalkPendingVoicePlan{
+			Plan:                          plan,
+			ExpectedInTrackedVoiceChannel: observation.InTrackedVoiceChannel,
+		})
+	}
+
+	return alreadyApplied, pending
+}
+
+// filterHostTalkVoiceRecords revalidates bot status, voice presence, and tracked-VC location.
+// For already-observed records, requireActualMatch additionally verifies mute/deaf still matches.
+func filterHostTalkVoiceRecords(
+	records []hostTalkVoiceRecord,
+	observations map[string]hostTalkVoiceObservation,
+	requireActualMatch bool,
+) []hostTalkVoiceRecord {
+	filtered := make([]hostTalkVoiceRecord, 0, len(records))
+	for _, record := range records {
+		observation, ok := observations[record.UserID]
+		if !ok || observation.IsBot {
+			continue
+		}
+		if observation.InTrackedVoiceChannel != record.ExpectedInTrackedVoiceChannel {
+			continue
+		}
+		if requireActualMatch && (observation.Mute != record.Mute || observation.Deaf != record.Deaf) {
+			continue
+		}
+		filtered = append(filtered, record)
+	}
+	return filtered
+}
+
+// filterHostTalkPendingVoicePlans is the last membership/bot gate immediately before Discord sending.
+func filterHostTalkPendingVoicePlans(
+	pending []hostTalkPendingVoicePlan,
+	observations map[string]hostTalkVoiceObservation,
+) []hostTalkPendingVoicePlan {
+	filtered := make([]hostTalkPendingVoicePlan, 0, len(pending))
+	for _, candidate := range pending {
+		observation, ok := observations[candidate.Plan.UserID]
+		if !ok || observation.IsBot {
+			continue
+		}
+		if observation.InTrackedVoiceChannel != candidate.ExpectedInTrackedVoiceChannel {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	return filtered
+}
+
+// recordsFromSuccessfulHostTalkPending prepares post-send bookkeeping only for users
+// that are still human, still in voice, and still on the same tracked/outside side of the VC boundary.
+func recordsFromSuccessfulHostTalkPending(
+	pending []hostTalkPendingVoicePlan,
+	observations map[string]hostTalkVoiceObservation,
+) []hostTalkVoiceRecord {
+	validated := filterHostTalkPendingVoicePlans(pending, observations)
+	records := make([]hostTalkVoiceRecord, 0, len(validated))
+	for _, candidate := range validated {
+		records = append(
+			records,
+			hostTalkVoiceRecordForPlan(
+				candidate.Plan,
+				candidate.ExpectedInTrackedVoiceChannel,
+			),
+		)
+	}
+	return records
 }
 
 type hostTalkVoiceMember struct {
