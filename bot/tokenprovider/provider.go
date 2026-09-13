@@ -174,6 +174,7 @@ func (tokenProvider *TokenProvider) ModifyUsers(guildID, connectCode string, req
 		return gerr
 	}
 	limit := PremiumBotConstraints[request.Premium]
+	capture := tokenProvider.newCaptureRoute(guildID, connectCode)
 
 	tasksChannel := make(chan task.UserModify, len(request.Users))
 	wg := sync.WaitGroup{}
@@ -214,7 +215,10 @@ func (tokenProvider *TokenProvider) ModifyUsers(guildID, connectCode string, req
 					uniqueTokensUsed[hToken] = struct{}{}
 					tokenLock.Unlock()
 				} else {
-					success := tokenProvider.attemptOnCaptureBot(guildID, connectCode, gid, req)
+					success := false
+					if capture.usable() {
+						success = tokenProvider.attemptOnCaptureBot(capture, gid, req)
+					}
 					if success {
 						lock.Lock()
 						mdsc.Capture++
