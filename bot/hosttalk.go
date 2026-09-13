@@ -118,6 +118,56 @@ func hostTalkVoiceStateMatches(current *GameState, expectedGuildID, expectedConn
 		current.GameStateMsg.HostTalkRevision == expectedRevision
 }
 
+// hostTalkVoiceMember is a pure snapshot of the information required to plan one member.
+// Discord lookup, actual mute-state comparison, sending, and persistence remain outside this layer.
+type hostTalkVoiceMember struct {
+	UserID                string
+	IsBot                 bool
+	InTrackedVoiceChannel bool
+	NormalApplicable      bool
+	NormalMute            bool
+	NormalDeaf            bool
+	WasHostTalkManaged    bool
+}
+
+// hostTalkVoicePlan is the desired result for one member.
+// ManagedAfterSuccess must only be persisted after the Discord operation succeeds.
+type hostTalkVoicePlan struct {
+	UserID              string
+	Mute                bool
+	Deaf                bool
+	ManagedAfterSuccess bool
+}
+
+// planHostTalkVoiceBatch applies the same pure decision contract to a complete voice-member snapshot.
+// Input order is preserved so the runtime adapter can retain the existing EM priority/order rules.
+func planHostTalkVoiceBatch(hostTalkMode bool, leaderID string, members []hostTalkVoiceMember) []hostTalkVoicePlan {
+	plans := make([]hostTalkVoicePlan, 0, len(members))
+	for _, member := range members {
+		decision := decideGameVoiceState(hostTalkVoiceInput{
+			HostTalkMode:          hostTalkMode,
+			LeaderID:              leaderID,
+			UserID:                member.UserID,
+			IsBot:                 member.IsBot,
+			InTrackedVoiceChannel: member.InTrackedVoiceChannel,
+			NormalApplicable:      member.NormalApplicable,
+			NormalMute:            member.NormalMute,
+			NormalDeaf:            member.NormalDeaf,
+			WasHostTalkManaged:    member.WasHostTalkManaged,
+		})
+		if !decision.Apply {
+			continue
+		}
+		plans = append(plans, hostTalkVoicePlan{
+			UserID:              member.UserID,
+			Mute:                decision.Mute,
+			Deaf:                decision.Deaf,
+			ManagedAfterSuccess: decision.ManagedAfterSuccess,
+		})
+	}
+	return plans
+}
+
 type hostTalkVoiceInput struct {
 	HostTalkMode          bool
 	LeaderID              string
