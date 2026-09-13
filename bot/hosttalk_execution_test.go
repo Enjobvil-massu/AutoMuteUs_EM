@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -498,5 +499,124 @@ func TestExecutionSnapshotHelpersDoNotMutateInputs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(observations, observationsBefore) {
 		t.Fatalf("observations mutated: %#v", observations)
+	}
+}
+
+func TestObserveHostTalkGuildVoiceMembersWithResolverIncludesUnknownHuman(t *testing.T) {
+	guild := hostTalkExecutionTestGuild()
+	calls := 0
+
+	got := observeHostTalkGuildVoiceMembersWithResolver(
+		guild,
+		"tracked",
+		func(userID string) (*discordgo.Member, error) {
+			calls++
+			if userID != "unknown-member" {
+				t.Fatalf("resolver called for cached user %q", userID)
+			}
+			return &discordgo.Member{
+				User: &discordgo.User{
+					ID:  userID,
+					Bot: false,
+				},
+			}, nil
+		},
+	)
+
+	if calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", calls)
+	}
+
+	observation, ok := got["unknown-member"]
+	if !ok {
+		t.Fatal("resolved unknown human was not included")
+	}
+	if observation.IsBot {
+		t.Fatal("resolved human incorrectly classified as bot")
+	}
+	if !observation.InTrackedVoiceChannel {
+		t.Fatal("resolved human should be in tracked VC")
+	}
+}
+
+func TestObserveHostTalkGuildVoiceMembersWithResolverClassifiesResolvedBot(t *testing.T) {
+	guild := hostTalkExecutionTestGuild()
+
+	got := observeHostTalkGuildVoiceMembersWithResolver(
+		guild,
+		"tracked",
+		func(userID string) (*discordgo.Member, error) {
+			return &discordgo.Member{
+				User: &discordgo.User{
+					ID:  userID,
+					Bot: true,
+				},
+			}, nil
+		},
+	)
+
+	observation, ok := got["unknown-member"]
+	if !ok {
+		t.Fatal("resolved bot observation missing")
+	}
+	if !observation.IsBot {
+		t.Fatal("resolved bot was not identified as bot")
+	}
+}
+
+func TestObserveHostTalkGuildVoiceMembersWithResolverFailureRemainsFailClosed(t *testing.T) {
+	guild := hostTalkExecutionTestGuild()
+
+	got := observeHostTalkGuildVoiceMembersWithResolver(
+		guild,
+		"tracked",
+		func(string) (*discordgo.Member, error) {
+			return nil, errors.New("simulated member lookup failure")
+		},
+	)
+
+	if _, ok := got["unknown-member"]; ok {
+		t.Fatal("resolver failure should remain fail-closed")
+	}
+}
+
+func TestObserveHostTalkGuildVoiceMembersWithResolverRejectsWrongIdentity(t *testing.T) {
+	guild := hostTalkExecutionTestGuild()
+
+	got := observeHostTalkGuildVoiceMembersWithResolver(
+		guild,
+		"tracked",
+		func(string) (*discordgo.Member, error) {
+			return &discordgo.Member{
+				User: &discordgo.User{
+					ID:  "different-user",
+					Bot: false,
+				},
+			}, nil
+		},
+	)
+
+	if _, ok := got["unknown-member"]; ok {
+		t.Fatal("resolver result for wrong Discord identity was accepted")
+	}
+}
+
+func TestObserveHostTalkGuildVoiceMembersWithResolverDoesNotResolveCachedMembers(t *testing.T) {
+	guild := hostTalkExecutionTestGuild()
+	guild.VoiceStates = guild.VoiceStates[:4]
+
+	calls := 0
+
+	_ = observeHostTalkGuildVoiceMembersWithResolver(
+		guild,
+		"tracked",
+		func(string) (*discordgo.Member, error) {
+			calls++
+			return nil, errors.New("resolver should not be called")
+		},
+	)
+
+	if calls != 0 {
+		t.Fatalf("resolver called %d times for cached members", calls)
 	}
 }

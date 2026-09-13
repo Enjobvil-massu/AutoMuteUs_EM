@@ -259,6 +259,17 @@ type hostTalkPendingVoicePlan struct {
 // observeHostTalkGuildVoiceMembers captures only voice users whose Discord member identity is known.
 // This fail-closed behavior prevents accidentally muting a bot when member information is unavailable.
 func observeHostTalkGuildVoiceMembers(guild *discordgo.Guild, trackedVoiceChannelID string) map[string]hostTalkVoiceObservation {
+	return observeHostTalkGuildVoiceMembersWithResolver(guild, trackedVoiceChannelID, nil)
+}
+
+// observeHostTalkGuildVoiceMembersWithResolver permits the runtime adapter to resolve
+// a voice user missing from the Guild member cache without enabling the GuildMembers intent.
+// If both cache and resolver fail, the user remains excluded fail-closed.
+func observeHostTalkGuildVoiceMembersWithResolver(
+	guild *discordgo.Guild,
+	trackedVoiceChannelID string,
+	resolveMember func(string) (*discordgo.Member, error),
+) map[string]hostTalkVoiceObservation {
 	observations := map[string]hostTalkVoiceObservation{}
 	if guild == nil {
 		return observations
@@ -276,10 +287,22 @@ func observeHostTalkGuildVoiceMembers(guild *discordgo.Guild, trackedVoiceChanne
 		if voiceState == nil || voiceState.UserID == "" {
 			continue
 		}
+
 		isBot, known := botByUserID[voiceState.UserID]
+		if !known && resolveMember != nil {
+			member, err := resolveMember(voiceState.UserID)
+			if err == nil &&
+				member != nil &&
+				member.User != nil &&
+				member.User.ID == voiceState.UserID {
+				isBot = member.User.Bot
+				known = true
+			}
+		}
 		if !known {
 			continue
 		}
+
 		observations[voiceState.UserID] = hostTalkVoiceObservation{
 			UserID:                voiceState.UserID,
 			IsBot:                 isBot,
