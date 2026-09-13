@@ -122,9 +122,22 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 			added := false
 			userData, added = dgs.checkCacheAndAddUser(g, sess, voiceState.UserID)
 			if !added {
+				normalApplicable := sett.GetMuteSpectator()
+				normalMute, normalDeaf := false, false
+				if normalApplicable {
+					normalMute, normalDeaf = sett.GetVoiceState(
+						false,
+						inTrackedVoiceChannel,
+						dgs.GameData.GetPhase(),
+					)
+				}
+
 				hostTalkMembers = append(hostTalkMembers, hostTalkVoiceMember{
 					UserID:                voiceState.UserID,
 					InTrackedVoiceChannel: inTrackedVoiceChannel,
+					NormalApplicable:      normalApplicable,
+					NormalMute:            normalMute,
+					NormalDeaf:            normalDeaf,
 					WasHostTalkManaged:    dgs.GameStateMsg.HostTalkManagedUsers[voiceState.UserID],
 				})
 				continue
@@ -208,6 +221,22 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 			hostTalkMembers,
 		)
 		return
+	}
+
+	managedHostTalkMembers := filterHostTalkManagedVoiceMembers(hostTalkMembers)
+	if len(managedHostTalkMembers) > 0 {
+		bot.handleHostTalkTrackedMembers(
+			sess,
+			delay,
+			dgs.GuildID,
+			dgs.ConnectCode,
+			dgs.VoiceChannel,
+			dgs.GameStateMsg.LeaderID,
+			expectedPhase,
+			expectedHostTalkMode,
+			expectedHostTalkRevision,
+			managedHostTalkMembers,
+		)
 	}
 
 	if len(users) == 0 {
@@ -296,6 +325,7 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 }
 
 // handleHostTalkTrackedMembers applies HostTalk ON as a separate runtime path.
+// It is also reused with a managed-only member set to restore normal rules after OFF or missing-leader cleanup.
 // Normal AutoMute remains unchanged when HostTalk is OFF or no leader is available.
 func (bot *Bot) handleHostTalkTrackedMembers(
 	sess *discordgo.Session,
@@ -314,8 +344,7 @@ func (bot *Bot) handleHostTalkTrackedMembers(
 		bot.TokenProvider == nil ||
 		sess == nil ||
 		sess.State == nil ||
-		!expectedMode ||
-		leaderID == "" {
+		len(members) == 0 {
 		return
 	}
 

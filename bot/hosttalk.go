@@ -522,6 +522,20 @@ func refreshHostTalkVoiceMembers(
 	return refreshed
 }
 
+// filterHostTalkManagedVoiceMembers limits OFF/missing-leader reconciliation
+// to users that were actually changed by HostTalk. Unmanaged users remain on
+// the existing normal AutoMute path.
+func filterHostTalkManagedVoiceMembers(members []hostTalkVoiceMember) []hostTalkVoiceMember {
+	filtered := make([]hostTalkVoiceMember, 0, len(members))
+	for _, member := range members {
+		if !member.WasHostTalkManaged {
+			continue
+		}
+		filtered = append(filtered, member)
+	}
+	return filtered
+}
+
 // hostTalkVoiceEventInput is the immutable decision snapshot for one Discord
 // voice-state event. MemberKnown must come from current Discord member data;
 // callers must never infer human/bot identity from AutoMuteUs UserData.
