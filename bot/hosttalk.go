@@ -8,6 +8,8 @@ import (
 
 var errHostTalkRevisionOverflow = errors.New("host talk revision exhausted")
 var errHostTalkGameStateUnavailable = errors.New("host talk game state unavailable")
+var errHostTalkLockUnavailable = errors.New("host talk game-state lock unavailable")
+var errHostTalkPersistFailed = errors.New("host talk game-state persistence failed")
 
 // isHostTalkAuthorized uses Discord identity and permissions, not EM bot-admin settings.
 // The caller is responsible for obtaining permissions for this user in the correct guild.
@@ -58,6 +60,50 @@ func planHostTalkGameState(current *GameState, requestedMode bool) (*GameState, 
 	candidate.GameStateMsg.HostTalkMode = newMode
 	candidate.GameStateMsg.HostTalkRevision = newRevision
 	return &candidate, true, nil
+}
+
+// commitHostTalkGameState persists a planned HostTalk transition before exposing it as committed.
+// current is never mutated. A persistence failure therefore leaves the caller with the original state.
+func commitHostTalkGameState(current *GameState, requestedMode bool, persist func(*GameState) error) (*GameState, bool, error) {
+	candidate, changed, err := planHostTalkGameState(current, requestedMode)
+	if err != nil {
+		return current, false, err
+	}
+	if !changed {
+		return current, false, nil
+	}
+	if persist == nil {
+		return current, false, errHostTalkPersistFailed
+	}
+	if err := persist(candidate); err != nil {
+		return current, false, errors.Join(errHostTalkPersistFailed, err)
+	}
+	return candidate, true, nil
+}
+
+// setHostTalkMode serializes an explicit ON/OFF transition with the existing Redis game-state lock.
+// It refuses to create a GameState when the requested game no longer exists.
+func (bot *Bot) setHostTalkMode(gsr GameStateRequest, requestedMode bool) (*GameState, bool, error) {
+	if bot == nil || bot.RedisInterface == nil {
+		return nil, false, errHostTalkGameStateUnavailable
+	}
+
+	// Reject stale/nonexistent games before attempting the existing-only lock path.
+	if bot.RedisInterface.getDiscordGameStateKey(gsr) == "" {
+		return nil, false, errHostTalkGameStateUnavailable
+	}
+
+	lock, current := bot.RedisInterface.getExistingDiscordGameStateAndLock(gsr)
+	if lock == nil || current == nil {
+		return nil, false, errHostTalkLockUnavailable
+	}
+	defer lock.Release(ctx)
+
+	return commitHostTalkGameState(
+		current,
+		requestedMode,
+		bot.RedisInterface.persistExistingDiscordGameState,
+	)
 }
 
 type hostTalkVoiceInput struct {
