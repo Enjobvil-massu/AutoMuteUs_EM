@@ -602,6 +602,103 @@ func planHostTalkVoiceEvent(input hostTalkVoiceEventInput) hostTalkVoiceEventPla
 	return result
 }
 
+// hostTalkVoiceEventObservation is the latest Discord identity/voice
+// snapshot for one user. Unlike batch observations, a known member who
+// has completely left voice is retained with InVoice=false so managed
+// cleanup can finish safely.
+type hostTalkVoiceEventObservation struct {
+	MemberKnown           bool
+	IsBot                 bool
+	InVoice               bool
+	InTrackedVoiceChannel bool
+	Mute                  bool
+	Deaf                  bool
+}
+
+func observeHostTalkVoiceEventUser(
+	guild *discordgo.Guild,
+	userID string,
+	trackedVoiceChannelID string,
+	resolveMember func(string) (*discordgo.Member, error),
+) hostTalkVoiceEventObservation {
+	observation := hostTalkVoiceEventObservation{}
+	if guild == nil || userID == "" {
+		return observation
+	}
+
+	for _, member := range guild.Members {
+		if member == nil || member.User == nil || member.User.ID != userID {
+			continue
+		}
+		observation.MemberKnown = true
+		observation.IsBot = member.User.Bot
+		break
+	}
+
+	if !observation.MemberKnown && resolveMember != nil {
+		member, err := resolveMember(userID)
+		if err == nil &&
+			member != nil &&
+			member.User != nil &&
+			member.User.ID == userID {
+			observation.MemberKnown = true
+			observation.IsBot = member.User.Bot
+		}
+	}
+
+	for _, voiceState := range guild.VoiceStates {
+		if voiceState == nil || voiceState.UserID != userID {
+			continue
+		}
+		observation.InVoice = voiceState.ChannelID != ""
+		observation.InTrackedVoiceChannel =
+			voiceState.ChannelID != "" &&
+				voiceState.ChannelID == trackedVoiceChannelID
+		observation.Mute = voiceState.Mute
+		observation.Deaf = voiceState.Deaf
+		break
+	}
+
+	return observation
+}
+
+func hostTalkVoiceEventObservationMatchesPlan(
+	plan hostTalkVoiceEventPlan,
+	observation hostTalkVoiceEventObservation,
+) bool {
+	return plan.Handled &&
+		plan.Apply &&
+		observation.MemberKnown &&
+		!observation.IsBot &&
+		observation.InTrackedVoiceChannel == plan.ExpectedInTrackedVoiceChannel
+}
+
+// hostTalkVoiceEventNeedsDiscordUpdate compares against Discord only after
+// the member/bot/VC-side validation succeeds. A user who has completely
+// left voice needs no Discord request for outside-VC cleanup.
+func hostTalkVoiceEventNeedsDiscordUpdate(
+	plan hostTalkVoiceEventPlan,
+	observation hostTalkVoiceEventObservation,
+) bool {
+	if !hostTalkVoiceEventObservationMatchesPlan(plan, observation) {
+		return false
+	}
+	if !observation.InVoice && !plan.ExpectedInTrackedVoiceChannel {
+		return false
+	}
+	return observation.Mute != plan.Mute || observation.Deaf != plan.Deaf
+}
+
+func hostTalkVoiceRecordForEventPlan(plan hostTalkVoiceEventPlan, userID string) hostTalkVoiceRecord {
+	return hostTalkVoiceRecord{
+		UserID:                        userID,
+		Mute:                          plan.Mute,
+		Deaf:                          plan.Deaf,
+		ManagedAfterSuccess:           plan.ManagedAfterSuccess,
+		ExpectedInTrackedVoiceChannel: plan.ExpectedInTrackedVoiceChannel,
+	}
+}
+
 type hostTalkVoiceInput struct {
 	HostTalkMode          bool
 	LeaderID              string
