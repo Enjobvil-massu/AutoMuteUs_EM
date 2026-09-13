@@ -7,6 +7,7 @@ import (
 )
 
 var errHostTalkRevisionOverflow = errors.New("host talk revision exhausted")
+var errHostTalkGameStateUnavailable = errors.New("host talk game state unavailable")
 
 // isHostTalkAuthorized uses Discord identity and permissions, not EM bot-admin settings.
 // The caller is responsible for obtaining permissions for this user in the correct guild.
@@ -29,6 +30,34 @@ func nextHostTalkState(currentMode bool, currentRevision uint64, requestedMode b
 		return currentMode, currentRevision, false, errHostTalkRevisionOverflow
 	}
 	return requestedMode, currentRevision + 1, true, nil
+}
+
+// planHostTalkGameState creates the candidate state for an explicit HostTalk ON/OFF request.
+// It never mutates current. Persistence is deliberately handled by a separate locked transaction layer.
+// HostTalkManagedUsers is preserved across mode changes so OFF reconciliation can clean users that HostTalk managed.
+func planHostTalkGameState(current *GameState, requestedMode bool) (*GameState, bool, error) {
+	if current == nil {
+		return nil, false, errHostTalkGameStateUnavailable
+	}
+
+	candidate := *current
+	candidate.GameStateMsg = current.GameStateMsg
+
+	newMode, newRevision, changed, err := nextHostTalkState(
+		current.GameStateMsg.HostTalkMode,
+		current.GameStateMsg.HostTalkRevision,
+		requestedMode,
+	)
+	if err != nil {
+		return &candidate, false, err
+	}
+	if !changed {
+		return &candidate, false, nil
+	}
+
+	candidate.GameStateMsg.HostTalkMode = newMode
+	candidate.GameStateMsg.HostTalkRevision = newRevision
+	return &candidate, true, nil
 }
 
 type hostTalkVoiceInput struct {

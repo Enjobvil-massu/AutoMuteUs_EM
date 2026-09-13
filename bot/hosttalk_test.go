@@ -345,3 +345,168 @@ func TestHostTalkZeroStateAndReset(t *testing.T) {
 		t.Fatalf("reset state = %+v, guild = %q", dgs.GameStateMsg, dgs.GuildID)
 	}
 }
+
+func TestPlanHostTalkGameStateRejectsNil(t *testing.T) {
+	candidate, changed, err := planHostTalkGameState(nil, true)
+
+	if !errors.Is(err, errHostTalkGameStateUnavailable) {
+		t.Fatalf("err = %v, want errHostTalkGameStateUnavailable", err)
+	}
+	if candidate != nil {
+		t.Fatalf("candidate = %#v, want nil", candidate)
+	}
+	if changed {
+		t.Fatal("nil GameState reported a state change")
+	}
+}
+
+func TestPlanHostTalkGameStateOffToOnDoesNotMutateOriginal(t *testing.T) {
+	current := NewDiscordGameState("guild-1")
+	current.ConnectCode = "ABCDEFGH"
+	current.VoiceChannel = "voice-1"
+	current.GameStateMsg.LeaderID = "host-1"
+	current.GameStateMsg.HostTalkMode = false
+	current.GameStateMsg.HostTalkRevision = 7
+	current.GameStateMsg.HostTalkManagedUsers = map[string]bool{
+		"user-1": true,
+	}
+
+	candidate, changed, err := planHostTalkGameState(current, true)
+	if err != nil {
+		t.Fatalf("planHostTalkGameState() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("OFF -> ON did not report a change")
+	}
+
+	if current.GameStateMsg.HostTalkMode {
+		t.Fatal("original GameState HostTalkMode was mutated")
+	}
+	if current.GameStateMsg.HostTalkRevision != 7 {
+		t.Fatalf("original revision = %d, want 7", current.GameStateMsg.HostTalkRevision)
+	}
+
+	if !candidate.GameStateMsg.HostTalkMode {
+		t.Fatal("candidate HostTalkMode = false, want true")
+	}
+	if candidate.GameStateMsg.HostTalkRevision != 8 {
+		t.Fatalf("candidate revision = %d, want 8", candidate.GameStateMsg.HostTalkRevision)
+	}
+
+	if candidate.GuildID != current.GuildID ||
+		candidate.ConnectCode != current.ConnectCode ||
+		candidate.VoiceChannel != current.VoiceChannel ||
+		candidate.GameStateMsg.LeaderID != current.GameStateMsg.LeaderID {
+		t.Fatalf("non-HostTalk game identity changed: candidate=%+v current=%+v", candidate, current)
+	}
+
+	if !reflect.DeepEqual(
+		candidate.GameStateMsg.HostTalkManagedUsers,
+		current.GameStateMsg.HostTalkManagedUsers,
+	) {
+		t.Fatalf(
+			"managed users changed: candidate=%v current=%v",
+			candidate.GameStateMsg.HostTalkManagedUsers,
+			current.GameStateMsg.HostTalkManagedUsers,
+		)
+	}
+}
+
+func TestPlanHostTalkGameStateOnToOffPreservesManagedUsers(t *testing.T) {
+	current := NewDiscordGameState("guild-1")
+	current.GameStateMsg.HostTalkMode = true
+	current.GameStateMsg.HostTalkRevision = 11
+	current.GameStateMsg.HostTalkManagedUsers = map[string]bool{
+		"host-1": true,
+		"user-1": true,
+		"user-2": true,
+	}
+
+	candidate, changed, err := planHostTalkGameState(current, false)
+	if err != nil {
+		t.Fatalf("planHostTalkGameState() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("ON -> OFF did not report a change")
+	}
+	if candidate.GameStateMsg.HostTalkMode {
+		t.Fatal("candidate HostTalkMode = true, want false")
+	}
+	if candidate.GameStateMsg.HostTalkRevision != 12 {
+		t.Fatalf("candidate revision = %d, want 12", candidate.GameStateMsg.HostTalkRevision)
+	}
+	if !reflect.DeepEqual(
+		candidate.GameStateMsg.HostTalkManagedUsers,
+		current.GameStateMsg.HostTalkManagedUsers,
+	) {
+		t.Fatalf(
+			"managed users were cleared or modified: candidate=%v current=%v",
+			candidate.GameStateMsg.HostTalkManagedUsers,
+			current.GameStateMsg.HostTalkManagedUsers,
+		)
+	}
+}
+
+func TestPlanHostTalkGameStateDuplicateRequestIsIdempotent(t *testing.T) {
+	for _, mode := range []bool{false, true} {
+		t.Run(map[bool]string{false: "duplicate OFF", true: "duplicate ON"}[mode], func(t *testing.T) {
+			current := NewDiscordGameState("guild-1")
+			current.GameStateMsg.HostTalkMode = mode
+			current.GameStateMsg.HostTalkRevision = 21
+			current.GameStateMsg.HostTalkManagedUsers = map[string]bool{
+				"user-1": true,
+			}
+
+			candidate, changed, err := planHostTalkGameState(current, mode)
+			if err != nil {
+				t.Fatalf("planHostTalkGameState() error = %v", err)
+			}
+			if changed {
+				t.Fatal("duplicate explicit mode request reported a change")
+			}
+			if candidate.GameStateMsg.HostTalkMode != mode {
+				t.Fatalf("candidate mode = %v, want %v", candidate.GameStateMsg.HostTalkMode, mode)
+			}
+			if candidate.GameStateMsg.HostTalkRevision != 21 {
+				t.Fatalf("candidate revision = %d, want 21", candidate.GameStateMsg.HostTalkRevision)
+			}
+			if !reflect.DeepEqual(
+				candidate.GameStateMsg.HostTalkManagedUsers,
+				current.GameStateMsg.HostTalkManagedUsers,
+			) {
+				t.Fatal("duplicate request changed managed users")
+			}
+		})
+	}
+}
+
+func TestPlanHostTalkGameStateRevisionOverflowPreservesState(t *testing.T) {
+	current := NewDiscordGameState("guild-1")
+	current.GameStateMsg.HostTalkMode = false
+	current.GameStateMsg.HostTalkRevision = ^uint64(0)
+	current.GameStateMsg.HostTalkManagedUsers = map[string]bool{
+		"user-1": true,
+	}
+
+	candidate, changed, err := planHostTalkGameState(current, true)
+
+	if !errors.Is(err, errHostTalkRevisionOverflow) {
+		t.Fatalf("err = %v, want errHostTalkRevisionOverflow", err)
+	}
+	if changed {
+		t.Fatal("overflow transition reported a state change")
+	}
+
+	if candidate.GameStateMsg.HostTalkMode != current.GameStateMsg.HostTalkMode {
+		t.Fatal("overflow changed HostTalkMode")
+	}
+	if candidate.GameStateMsg.HostTalkRevision != current.GameStateMsg.HostTalkRevision {
+		t.Fatal("overflow changed HostTalkRevision")
+	}
+	if !reflect.DeepEqual(
+		candidate.GameStateMsg.HostTalkManagedUsers,
+		current.GameStateMsg.HostTalkManagedUsers,
+	) {
+		t.Fatal("overflow changed managed users")
+	}
+}
