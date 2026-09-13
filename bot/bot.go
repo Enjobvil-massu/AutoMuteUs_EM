@@ -348,6 +348,9 @@ func (bot *Bot) newGuild(emojiGuildID string) func(s *discordgo.Session, m *disc
 }
 
 func (bot *Bot) leaveGuild(_ *discordgo.Session, m *discordgo.GuildDelete) {
+	if m.Unavailable {
+		return
+	} // A temporary Discord outage is not a guild removal.
 	log.Println("Bot was removed from Guild " + m.ID)
 	bot.RedisInterface.LeaveUniqueGuildCounter(m.ID)
 
