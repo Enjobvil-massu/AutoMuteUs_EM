@@ -510,3 +510,85 @@ func TestPlanHostTalkGameStateRevisionOverflowPreservesState(t *testing.T) {
 		t.Fatal("overflow changed managed users")
 	}
 }
+
+func TestHostTalkVoiceStateMatches(t *testing.T) {
+	current := NewDiscordGameState("guild-1")
+	current.ConnectCode = "ABCDEFGH"
+	current.GameStateMsg.HostTalkMode = true
+	current.GameStateMsg.HostTalkRevision = 17
+
+	tests := []struct {
+		name        string
+		state       *GameState
+		guildID     string
+		connectCode string
+		mode        bool
+		revision    uint64
+		want        bool
+	}{
+		{
+			name:        "exact snapshot matches",
+			state:       current,
+			guildID:     "guild-1",
+			connectCode: "ABCDEFGH",
+			mode:        true,
+			revision:    17,
+			want:        true,
+		},
+		{
+			name:        "nil state rejected",
+			state:       nil,
+			guildID:     "guild-1",
+			connectCode: "ABCDEFGH",
+			mode:        true,
+			revision:    17,
+		},
+		{
+			name:        "different guild rejected",
+			state:       current,
+			guildID:     "guild-2",
+			connectCode: "ABCDEFGH",
+			mode:        true,
+			revision:    17,
+		},
+		{
+			name:        "different game rejected",
+			state:       current,
+			guildID:     "guild-1",
+			connectCode: "HGFEDCBA",
+			mode:        true,
+			revision:    17,
+		},
+		{
+			name:        "mode toggle invalidates pending work",
+			state:       current,
+			guildID:     "guild-1",
+			connectCode: "ABCDEFGH",
+			mode:        false,
+			revision:    17,
+		},
+		{
+			name:        "revision increment invalidates pending work",
+			state:       current,
+			guildID:     "guild-1",
+			connectCode: "ABCDEFGH",
+			mode:        true,
+			revision:    16,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hostTalkVoiceStateMatches(
+				tt.state,
+				tt.guildID,
+				tt.connectCode,
+				tt.mode,
+				tt.revision,
+			)
+			if got != tt.want {
+				t.Fatalf("hostTalkVoiceStateMatches() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

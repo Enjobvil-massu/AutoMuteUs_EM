@@ -165,6 +165,8 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 	}
 
 	expectedPhase := dgs.GameData.GetPhase()
+	expectedHostTalkMode := dgs.GameStateMsg.HostTalkMode
+	expectedHostTalkRevision := dgs.GameStateMsg.HostTalkRevision
 
 	// We relinquish the game-state lock while waiting and while calling Discord.
 	bot.RedisInterface.SetDiscordGameState(dgs, lock)
@@ -190,7 +192,16 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 		GuildID:     dgs.GuildID,
 		ConnectCode: dgs.ConnectCode,
 	})
-	if latest == nil || !latest.Running || latest.GameData.GetPhase() != expectedPhase {
+	if latest == nil ||
+		!latest.Running ||
+		latest.GameData.GetPhase() != expectedPhase ||
+		!hostTalkVoiceStateMatches(
+			latest,
+			dgs.GuildID,
+			dgs.ConnectCode,
+			expectedHostTalkMode,
+			expectedHostTalkRevision,
+		) {
 		if voiceLock != nil {
 			_ = voiceLock.Release(context.Background())
 		}

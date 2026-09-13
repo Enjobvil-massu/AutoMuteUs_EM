@@ -106,6 +106,18 @@ func (bot *Bot) setHostTalkMode(gsr GameStateRequest, requestedMode bool) (*Game
 	)
 }
 
+// hostTalkVoiceStateMatches validates that delayed voice work still belongs to the same game and HostTalk revision.
+// Phase and Running checks remain in the EM voice pipeline because they are normal AutoMute invariants.
+func hostTalkVoiceStateMatches(current *GameState, expectedGuildID, expectedConnectCode string, expectedMode bool, expectedRevision uint64) bool {
+	if current == nil {
+		return false
+	}
+	return current.GuildID == expectedGuildID &&
+		current.ConnectCode == expectedConnectCode &&
+		current.GameStateMsg.HostTalkMode == expectedMode &&
+		current.GameStateMsg.HostTalkRevision == expectedRevision
+}
+
 type hostTalkVoiceInput struct {
 	HostTalkMode          bool
 	LeaderID              string
