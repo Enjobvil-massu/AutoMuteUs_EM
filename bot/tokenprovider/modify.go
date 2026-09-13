@@ -45,6 +45,11 @@ func (tokenProvider *TokenProvider) attemptOnSecondaryTokens(guildID, userID str
 }
 
 func (tokenProvider *TokenProvider) attemptOnCaptureBot(guildID, connectCode string, gid uint64, request task.UserModify) bool {
+	if tokenProvider.isBlacklisted(guildID, connectCode) {
+		log.Printf("Capture client for gamecode %q is blacklisted. Deferring to main bot", connectCode)
+		return false
+	}
+
 	// this is cheeky, but use the connect code as part of the lock; don't issue too many requests on the capture client w/ this code
 	if tokenProvider.IncrAndTestGuildTokenComboLock(guildID, connectCode) {
 		// if the secondary token didn't work, then next we try the client-side capture request

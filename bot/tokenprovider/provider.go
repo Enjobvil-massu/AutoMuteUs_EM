@@ -102,6 +102,9 @@ func (tokenProvider *TokenProvider) getSession(guildID string, hTokenSubset map[
 	for hToken, sess := range tokenProvider.activeSessions {
 		// if we have already used this token successfully, or haven't set any restrictions
 		if hTokenSubset == nil || mapHasEntry(hTokenSubset, hToken) {
+			if tokenProvider.isBlacklisted(guildID, hToken) {
+				continue
+			}
 			// if this token isn't potentially rate-limited
 			if tokenProvider.IncrAndTestGuildTokenComboLock(guildID, hToken) {
 				return sess, hToken
@@ -142,13 +145,19 @@ func (tokenProvider *TokenProvider) IncrAndTestGuildTokenComboLock(guildID, hash
 	return true
 }
 
-// BlacklistTokenForDuration sets a guild token (or connect code ala capture bot) to the maximum value allowed before
-// attempting other non-rate-limited mute/deafen methods.
-// NOTE: this will manifest as the capture/token in question appearing like it "has been used <maxnum> times" in logs,
-// even if this is not technically accurate. A more accurate approach would probably use a totally separate Redis key,
-// as opposed to this approach, which simply uses the ratelimiting counter key(s) to achieve blacklisting
+// isBlacklisted reports whether a secondary token or capture client is temporarily unavailable for mute/deafen requests.
+func (tokenProvider *TokenProvider) isBlacklisted(guildID, hToken string) bool {
+	n, err := tokenProvider.client.Exists(context.Background(), rediskey.MuteBlacklist(guildID, hToken)).Result()
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+	return n > 0
+}
+
+// BlacklistTokenForDuration records mute/deafen failures separately from the short-lived rate-limit counter.
 func (tokenProvider *TokenProvider) BlacklistTokenForDuration(guildID, hashToken string, duration time.Duration) error {
-	return tokenProvider.client.Set(context.Background(), rediskey.GuildTokenLock(guildID, hashToken), tokenProvider.maxRequests5Seconds, duration).Err()
+	return tokenProvider.client.Set(context.Background(), rediskey.MuteBlacklist(guildID, hashToken), "1", duration).Err()
 }
 
 const DefaultMaxWorkers = 8
