@@ -240,6 +240,41 @@ func commitHostTalkSuccessfulVoiceRecord(
 	return candidate, true, nil
 }
 
+// recordHostTalkSuccessfulVoiceRecords serializes successful HostTalk bookkeeping
+// with the existing-only game-state lock. Missing/stale games are never recreated.
+func (bot *Bot) recordHostTalkSuccessfulVoiceRecords(
+	gsr GameStateRequest,
+	expectedPhase game.Phase,
+	expectedMode bool,
+	expectedRevision uint64,
+	records []hostTalkVoiceRecord,
+) error {
+	if len(records) == 0 {
+		return nil
+	}
+	if bot == nil || bot.RedisInterface == nil {
+		return errHostTalkGameStateUnavailable
+	}
+
+	lock, current := bot.RedisInterface.getExistingDiscordGameStateAndLock(gsr)
+	if lock == nil || current == nil {
+		return errHostTalkLockUnavailable
+	}
+	defer lock.Release(ctx)
+
+	_, _, err := commitHostTalkSuccessfulVoiceRecord(
+		current,
+		gsr.GuildID,
+		gsr.ConnectCode,
+		expectedPhase,
+		expectedMode,
+		expectedRevision,
+		records,
+		bot.RedisInterface.persistExistingDiscordGameState,
+	)
+	return err
+}
+
 // hostTalkVoiceObservation is a current Discord voice/member snapshot.
 // Unknown guild members are deliberately omitted so HostTalk never assumes an unknown account is human.
 type hostTalkVoiceObservation struct {
@@ -466,6 +501,25 @@ func planHostTalkVoiceBatch(hostTalkMode bool, leaderID string, members []hostTa
 		})
 	}
 	return plans
+}
+
+// refreshHostTalkVoiceMembers applies the newest Discord bot/VC observation
+// to an immutable normal-rule snapshot. Unknown members are excluded fail-closed.
+func refreshHostTalkVoiceMembers(
+	members []hostTalkVoiceMember,
+	observations map[string]hostTalkVoiceObservation,
+) []hostTalkVoiceMember {
+	refreshed := make([]hostTalkVoiceMember, 0, len(members))
+	for _, member := range members {
+		observation, ok := observations[member.UserID]
+		if !ok {
+			continue
+		}
+		member.IsBot = observation.IsBot
+		member.InTrackedVoiceChannel = observation.InTrackedVoiceChannel
+		refreshed = append(refreshed, member)
+	}
+	return refreshed
 }
 
 type hostTalkVoiceInput struct {

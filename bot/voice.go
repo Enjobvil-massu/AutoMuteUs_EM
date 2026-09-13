@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"github.com/automuteus/automuteus/v8/pkg/game"
 	"github.com/automuteus/automuteus/v8/pkg/premium"
 	"github.com/automuteus/automuteus/v8/pkg/settings"
 	"github.com/automuteus/automuteus/v8/pkg/task"
@@ -109,20 +110,28 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 	}
 
 	var users []task.UserModify
+	var hostTalkMembers []hostTalkVoiceMember
 
 	priorityRequests := 0
 	for _, voiceState := range g.VoiceStates {
+		inTrackedVoiceChannel := voiceState.ChannelID != "" && dgs.VoiceChannel == voiceState.ChannelID
+
 		userData, err := dgs.GetUser(voiceState.UserID)
 		if err != nil {
 			// the User doesn't exist in our userdata cache; add them
 			added := false
 			userData, added = dgs.checkCacheAndAddUser(g, sess, voiceState.UserID)
 			if !added {
+				hostTalkMembers = append(hostTalkMembers, hostTalkVoiceMember{
+					UserID:                voiceState.UserID,
+					InTrackedVoiceChannel: inTrackedVoiceChannel,
+					WasHostTalkManaged:    dgs.GameStateMsg.HostTalkManagedUsers[voiceState.UserID],
+				})
 				continue
 			}
 		}
 
-		tracked := voiceState.ChannelID != "" && dgs.VoiceChannel == voiceState.ChannelID
+		tracked := inTrackedVoiceChannel
 
 		auData, found := dgs.GameData.GetByName(userData.InGameName)
 		// only actually tracked if we're in a tracked channel AND linked to a player
@@ -141,6 +150,20 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 			}
 		}
 		shouldMute, shouldDeaf := sett.GetVoiceState(isAlive, tracked, dgs.GameData.GetPhase())
+
+		hostTalkMember := hostTalkVoiceMember{
+			UserID:                voiceState.UserID,
+			InTrackedVoiceChannel: inTrackedVoiceChannel,
+			NormalApplicable:      found || sett.GetMuteSpectator(),
+			NormalMute:            shouldMute,
+			NormalDeaf:            shouldDeaf,
+			WasHostTalkManaged:    dgs.GameStateMsg.HostTalkManagedUsers[voiceState.UserID],
+		}
+		if handlePriority != NoPriority && ((handlePriority == AlivePriority && isAlive) || (handlePriority == DeadPriority && !isAlive)) {
+			hostTalkMembers = append([]hostTalkVoiceMember{hostTalkMember}, hostTalkMembers...)
+		} else {
+			hostTalkMembers = append(hostTalkMembers, hostTalkMember)
+		}
 
 		incorrectMuteDeafenState := shouldMute != userData.ShouldBeMute || shouldDeaf != userData.ShouldBeDeaf
 
@@ -170,6 +193,22 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 
 	// We relinquish the game-state lock while waiting and while calling Discord.
 	bot.RedisInterface.SetDiscordGameState(dgs, lock)
+
+	if expectedHostTalkMode && dgs.GameStateMsg.LeaderID != "" {
+		bot.handleHostTalkTrackedMembers(
+			sess,
+			delay,
+			dgs.GuildID,
+			dgs.ConnectCode,
+			dgs.VoiceChannel,
+			dgs.GameStateMsg.LeaderID,
+			expectedPhase,
+			expectedHostTalkMode,
+			expectedHostTalkRevision,
+			hostTalkMembers,
+		)
+		return
+	}
 
 	if len(users) == 0 {
 		return
@@ -253,6 +292,217 @@ func (bot *Bot) handleTrackedMembers(sess *discordgo.Session, sett *settings.Gui
 				log.Println(err)
 			}
 		}
+	}
+}
+
+// handleHostTalkTrackedMembers applies HostTalk ON as a separate runtime path.
+// Normal AutoMute remains unchanged when HostTalk is OFF or no leader is available.
+func (bot *Bot) handleHostTalkTrackedMembers(
+	sess *discordgo.Session,
+	delay int,
+	guildID string,
+	connectCode string,
+	voiceChannelID string,
+	leaderID string,
+	expectedPhase game.Phase,
+	expectedMode bool,
+	expectedRevision uint64,
+	members []hostTalkVoiceMember,
+) {
+	if bot == nil ||
+		bot.RedisInterface == nil ||
+		bot.TokenProvider == nil ||
+		sess == nil ||
+		sess.State == nil ||
+		!expectedMode ||
+		leaderID == "" {
+		return
+	}
+
+	resolvedMembers := map[string]*discordgo.Member{}
+	resolveMember := func(userID string) (*discordgo.Member, error) {
+		if member, ok := resolvedMembers[userID]; ok {
+			return member, nil
+		}
+		member, err := sess.GuildMember(guildID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if member != nil {
+			resolvedMembers[userID] = member
+		}
+		return member, nil
+	}
+
+	observe := func() (map[string]hostTalkVoiceObservation, bool) {
+		guild, err := sess.State.Guild(guildID)
+		if err != nil || guild == nil {
+			return nil, false
+		}
+		return observeHostTalkGuildVoiceMembersWithResolver(
+			guild,
+			voiceChannelID,
+			resolveMember,
+		), true
+	}
+
+	stateStillCurrent := func() bool {
+		latest := bot.RedisInterface.GetReadOnlyDiscordGameState(GameStateRequest{
+			GuildID:     guildID,
+			ConnectCode: connectCode,
+		})
+		return latest != nil &&
+			latest.Running &&
+			latest.GameData.GetPhase() == expectedPhase &&
+			hostTalkVoiceStateMatches(
+				latest,
+				guildID,
+				connectCode,
+				expectedMode,
+				expectedRevision,
+			)
+	}
+
+	initialObservations, ok := observe()
+	if !ok {
+		return
+	}
+	initialMembers := refreshHostTalkVoiceMembers(members, initialObservations)
+	initialPlans := planHostTalkVoiceBatch(expectedMode, leaderID, initialMembers)
+	if len(initialPlans) == 0 {
+		return
+	}
+
+	voiceLock := bot.RedisInterface.LockVoiceChanges(
+		connectCode,
+		time.Second*time.Duration(delay+1),
+	)
+	if voiceLock == nil {
+		log.Printf("Skipped overlapping HostTalk voice update for game %s", connectCode)
+		return
+	}
+
+	voiceLockOwned := true
+	defer func() {
+		if voiceLockOwned {
+			_ = voiceLock.Release(context.Background())
+		}
+	}()
+
+	if delay > 0 {
+		log.Printf("Sleeping for %d seconds before applying HostTalk changes to users\n", delay)
+		time.Sleep(time.Second * time.Duration(delay))
+	}
+
+	if !stateStillCurrent() {
+		log.Printf("Skipped stale HostTalk voice update for game %s", connectCode)
+		return
+	}
+
+	preSendObservations, ok := observe()
+	if !ok {
+		return
+	}
+	currentMembers := refreshHostTalkVoiceMembers(members, preSendObservations)
+	plans := planHostTalkVoiceBatch(expectedMode, leaderID, currentMembers)
+	alreadyApplied, pending := partitionHostTalkVoicePlans(plans, preSendObservations)
+	alreadyApplied = filterHostTalkVoiceRecords(alreadyApplied, preSendObservations, true)
+	pending = filterHostTalkPendingVoicePlans(pending, preSendObservations)
+
+	if len(alreadyApplied) == 0 && len(pending) == 0 {
+		return
+	}
+
+	requestUsers := make([]task.UserModify, 0, len(pending))
+	sentPending := make([]hostTalkPendingVoicePlan, 0, len(pending))
+	for _, candidate := range pending {
+		uid, err := strconv.ParseUint(candidate.Plan.UserID, 10, 64)
+		if err != nil {
+			log.Printf("Skipped HostTalk voice request for invalid Discord user ID %q: %v", candidate.Plan.UserID, err)
+			continue
+		}
+		requestUsers = append(requestUsers, task.UserModify{
+			UserID: uid,
+			Mute:   candidate.Plan.Mute,
+			Deaf:   candidate.Plan.Deaf,
+		})
+		sentPending = append(sentPending, candidate)
+	}
+
+	var sendErr error
+	if len(requestUsers) > 0 {
+		// Re-check game identity/phase/mode/revision immediately before Discord.
+		if !stateStillCurrent() {
+			log.Printf("Skipped HostTalk send after a newer state arrived for game %s", connectCode)
+			return
+		}
+
+		prem, days, _ := bot.PostgresInterface.GetGuildOrUserPremiumStatus(
+			bot.official,
+			nil,
+			guildID,
+			"",
+		)
+		premTier := premium.FreeTier
+		if !premium.IsExpired(prem, days) {
+			premTier = prem
+		}
+
+		req := task.UserModifyRequest{
+			Premium: premTier,
+			Users:   requestUsers,
+		}
+
+		// ModifyUsers owns/relinquishes voiceLock once called.
+		voiceLockOwned = false
+		sendErr = bot.TokenProvider.ModifyUsers(
+			guildID,
+			connectCode,
+			req,
+			voiceLock,
+		)
+		if sendErr != nil {
+			log.Printf("HostTalk Discord voice update failed for game %s: %v", connectCode, sendErr)
+		}
+	}
+
+	// Revalidate human/bot identity and VC side again before recording.
+	postSendObservations, ok := observe()
+	if !ok {
+		return
+	}
+
+	records := filterHostTalkVoiceRecords(
+		alreadyApplied,
+		postSendObservations,
+		true,
+	)
+
+	if sendErr == nil && len(requestUsers) > 0 {
+		records = append(
+			records,
+			recordsFromSuccessfulHostTalkPending(
+				sentPending,
+				postSendObservations,
+			)...,
+		)
+	}
+
+	if len(records) == 0 {
+		return
+	}
+
+	if err := bot.recordHostTalkSuccessfulVoiceRecords(
+		GameStateRequest{
+			GuildID:     guildID,
+			ConnectCode: connectCode,
+		},
+		expectedPhase,
+		expectedMode,
+		expectedRevision,
+		records,
+	); err != nil {
+		log.Printf("HostTalk voice state applied but bookkeeping was not committed for game %s: %v", connectCode, err)
 	}
 }
 
