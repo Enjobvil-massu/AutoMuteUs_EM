@@ -567,7 +567,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			bot.RedisInterface.SetDiscordGameState(dgs, lock)
 			// if we paused the game, unmute/undeafen all players
 			if !dgs.Running {
-				err = bot.applyToAll(dgs, false, false)
+				err = bot.applyFailSafeVoiceReset(dgs)
 			}
 			bot.DispatchRefreshOrEdit(dgs, gsr, sett)
 			if err != nil {
@@ -588,7 +588,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				// The subscriber performs the normal fail-safe unmute and cleanup.
 				// If its channel is missing, fall back to doing the cleanup here.
 				if !bot.signalEndGame(dgs.ConnectCode) {
-					err = bot.applyToAll(dgs, false, false)
+					err = bot.applyFailSafeVoiceReset(dgs)
 					if err != nil {
 						return command.PrivateErrorResponse(command.End.Name, err, sett)
 					}
@@ -1143,7 +1143,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				// The subscriber performs the normal fail-safe unmute and cleanup.
 				// If its channel is missing, fall back to doing the cleanup here.
 				if !bot.signalEndGame(dgs.ConnectCode) {
-					err = bot.applyToAll(dgs, false, false)
+					err = bot.applyFailSafeVoiceReset(dgs)
 					if err != nil {
 						return command.PrivateErrorResponse(command.End.Name, err, sett)
 					}

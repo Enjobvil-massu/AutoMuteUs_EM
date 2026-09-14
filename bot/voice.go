@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"github.com/automuteus/automuteus/v8/pkg/game"
 	"github.com/automuteus/automuteus/v8/pkg/premium"
 	"github.com/automuteus/automuteus/v8/pkg/settings"
@@ -91,6 +92,104 @@ func (bot *Bot) applyToAll(dgs *GameState, mute, deaf bool) error {
 		return bot.TokenProvider.ModifyUsers(dgs.GuildID, dgs.ConnectCode, req, nil)
 	}
 	return nil
+}
+
+// applyHostTalkManagedVoiceReset resets currently-present human users that
+// HostTalk previously changed. Member identity is revalidated from current
+// Discord state (with REST fallback) before any request is sent.
+func (bot *Bot) applyHostTalkManagedVoiceReset(dgs *GameState) error {
+	if dgs == nil || len(dgs.GameStateMsg.HostTalkManagedUsers) == 0 {
+		return nil
+	}
+	if bot == nil ||
+		bot.PrimarySession == nil ||
+		bot.PrimarySession.State == nil ||
+		bot.TokenProvider == nil {
+		return errors.New("HostTalk managed voice reset unavailable")
+	}
+
+	guild, err := bot.PrimarySession.State.Guild(dgs.GuildID)
+	if err != nil {
+		return err
+	}
+	if guild == nil {
+		return errors.New("Discord guild unavailable during HostTalk managed voice reset")
+	}
+
+	resolvedMembers := map[string]*discordgo.Member{}
+	resolveMember := func(userID string) (*discordgo.Member, error) {
+		if member, ok := resolvedMembers[userID]; ok {
+			return member, nil
+		}
+		member, err := bot.PrimarySession.GuildMember(dgs.GuildID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if member != nil {
+			resolvedMembers[userID] = member
+		}
+		return member, nil
+	}
+
+	observations := observeHostTalkGuildVoiceMembersWithResolver(
+		guild,
+		dgs.VoiceChannel,
+		resolveMember,
+	)
+
+	plans := planHostTalkManagedVoiceReset(
+		dgs.GameStateMsg.HostTalkManagedUsers,
+		observations,
+	)
+	if len(plans) == 0 {
+		return nil
+	}
+
+	users := make([]task.UserModify, 0, len(plans))
+	for _, plan := range plans {
+		uid, err := strconv.ParseUint(plan.UserID, 10, 64)
+		if err != nil {
+			return err
+		}
+		users = append(users, task.UserModify{
+			UserID: uid,
+			Mute:   false,
+			Deaf:   false,
+		})
+	}
+
+	prem, days, _ := bot.PostgresInterface.GetGuildOrUserPremiumStatus(
+		bot.official,
+		nil,
+		dgs.GuildID,
+		"",
+	)
+	premTier := premium.FreeTier
+	if !premium.IsExpired(prem, days) {
+		premTier = prem
+	}
+
+	req := task.UserModifyRequest{
+		Premium: premTier,
+		Users:   users,
+	}
+
+	// End/pause reset is an override just like the existing applyToAll path.
+	return bot.TokenProvider.ModifyUsers(
+		dgs.GuildID,
+		dgs.ConnectCode,
+		req,
+		nil,
+	)
+}
+
+// applyFailSafeVoiceReset preserves the existing linked-player reset and
+// additionally resets HostTalk-managed humans, including unlinked users.
+// Both paths are attempted even if one fails.
+func (bot *Bot) applyFailSafeVoiceReset(dgs *GameState) error {
+	normalErr := bot.applyToAll(dgs, false, false)
+	hostTalkErr := bot.applyHostTalkManagedVoiceReset(dgs)
+	return errors.Join(normalErr, hostTalkErr)
 }
 
 // handleTrackedMembers moves/mutes players according to the current game state

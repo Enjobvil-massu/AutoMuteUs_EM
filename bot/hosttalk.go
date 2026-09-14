@@ -522,6 +522,29 @@ func refreshHostTalkVoiceMembers(
 	return refreshed
 }
 
+// planHostTalkManagedVoiceReset selects currently-present human voice users
+// that HostTalk previously changed. End/pause cleanup intentionally ignores
+// tracked-VC location because Discord server mute follows the member when they
+// move to another voice channel.
+func planHostTalkManagedVoiceReset(
+	managed map[string]bool,
+	observations map[string]hostTalkVoiceObservation,
+) []hostTalkVoicePlan {
+	plans := make([]hostTalkVoicePlan, 0)
+	for userID, observation := range observations {
+		if userID == "" || !managed[userID] || observation.IsBot {
+			continue
+		}
+		plans = append(plans, hostTalkVoicePlan{
+			UserID:              userID,
+			Mute:                false,
+			Deaf:                false,
+			ManagedAfterSuccess: false,
+		})
+	}
+	return plans
+}
+
 // filterHostTalkManagedVoiceMembers limits OFF/missing-leader reconciliation
 // to users that were actually changed by HostTalk. Unmanaged users remain on
 // the existing normal AutoMute path.
