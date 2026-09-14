@@ -183,13 +183,98 @@ func (bot *Bot) applyHostTalkManagedVoiceReset(dgs *GameState) error {
 	)
 }
 
-// applyFailSafeVoiceReset preserves the existing linked-player reset and
-// additionally resets HostTalk-managed humans, including unlinked users.
-// Both paths are attempted even if one fails.
+// quiesceVoiceResetState makes later normal AutoMute and HostTalk stale
+// checks reject any delayed mute/deafen plan for this game.
+func quiesceVoiceResetState(dgs *GameState) bool {
+	if dgs == nil || !dgs.Running {
+		return false
+	}
+	dgs.Running = false
+	return true
+}
+
+// quiesceGameForVoiceReset persists Running=false before the final reset.
+// It always returns the freshest state snapshot it was able to obtain.
+func (bot *Bot) quiesceGameForVoiceReset(dgs *GameState) (*GameState, error) {
+	if dgs == nil {
+		return nil, errors.New("cannot quiesce nil game state")
+	}
+	if bot == nil || bot.RedisInterface == nil {
+		return dgs, errors.New("Redis unavailable while quiescing voice reset")
+	}
+	if dgs.GuildID == "" || dgs.ConnectCode == "" {
+		return dgs, errors.New("game identity unavailable while quiescing voice reset")
+	}
+
+	stateLock, latest := bot.RedisInterface.getExistingDiscordGameStateAndLock(
+		GameStateRequest{
+			GuildID:     dgs.GuildID,
+			ConnectCode: dgs.ConnectCode,
+		},
+	)
+	if stateLock == nil || latest == nil {
+		return dgs, errors.New("unable to obtain existing game state while quiescing voice reset")
+	}
+
+	quiesceVoiceResetState(latest)
+	persistErr := bot.RedisInterface.persistExistingDiscordGameState(latest)
+	releaseErr := stateLock.Release(ctx)
+
+	return latest, errors.Join(persistErr, releaseErr)
+}
+
+// acquireVoiceResetBarrier waits for any already-running normal AutoMute or
+// HostTalk request to relinquish the per-game voice lock. Running=false is
+// persisted before this function is called, so new delayed work cannot pass
+// its stale-state validation and send another mute after the final reset.
+func (bot *Bot) acquireVoiceResetBarrier(connectCode string) (*redislock.Lock, error) {
+	if bot == nil || bot.RedisInterface == nil || connectCode == "" {
+		return nil, errors.New("voice reset barrier unavailable")
+	}
+
+	const attempts = 12
+	const lease = 30 * time.Second
+
+	for attempt := 1; attempt <= attempts; attempt++ {
+		voiceLock := bot.RedisInterface.LockVoiceChanges(connectCode, lease)
+		if voiceLock != nil {
+			return voiceLock, nil
+		}
+		if attempt < attempts {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	return nil, errors.New("unable to drain in-flight voice changes before reset")
+}
+
+// applyFailSafeVoiceReset first makes the game non-running, then drains the
+// same voice lock used by normal AutoMute and HostTalk, and finally performs
+// the existing linked-player reset plus HostTalk-managed reset while holding
+// that barrier. Both reset paths are still attempted even when one fails.
 func (bot *Bot) applyFailSafeVoiceReset(dgs *GameState) error {
-	normalErr := bot.applyToAll(dgs, false, false)
-	hostTalkErr := bot.applyHostTalkManagedVoiceReset(dgs)
-	return errors.Join(normalErr, hostTalkErr)
+	resetState, quiesceErr := bot.quiesceGameForVoiceReset(dgs)
+	if resetState == nil {
+		return quiesceErr
+	}
+
+	voiceBarrier, barrierErr := bot.acquireVoiceResetBarrier(resetState.ConnectCode)
+
+	normalErr := bot.applyToAll(resetState, false, false)
+	hostTalkErr := bot.applyHostTalkManagedVoiceReset(resetState)
+
+	var releaseErr error
+	if voiceBarrier != nil {
+		releaseErr = voiceBarrier.Release(context.Background())
+	}
+
+	return errors.Join(
+		quiesceErr,
+		barrierErr,
+		normalErr,
+		hostTalkErr,
+		releaseErr,
+	)
 }
 
 // handleTrackedMembers moves/mutes players according to the current game state
