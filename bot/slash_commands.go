@@ -541,6 +541,15 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				}, sett)
 			}
 
+		case command.HostMute.Name:
+			return bot.handleHostTalkSlashCommand(
+				s,
+				i,
+				g,
+				sett,
+				gsr,
+			)
+
 		case command.Refresh.Name:
 			if bot.RefreshGameStateMessage(gsr, sett) {
 				return command.PrivateResponse(ThumbsUp)
@@ -567,7 +576,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			bot.RedisInterface.SetDiscordGameState(dgs, lock)
 			// if we paused the game, unmute/undeafen all players
 			if !dgs.Running {
-				err = bot.applyToAll(dgs, false, false)
+				err = bot.applyFailSafeVoiceReset(dgs)
 			}
 			bot.DispatchRefreshOrEdit(dgs, gsr, sett)
 			if err != nil {
@@ -588,7 +597,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				// The subscriber performs the normal fail-safe unmute and cleanup.
 				// If its channel is missing, fall back to doing the cleanup here.
 				if !bot.signalEndGame(dgs.ConnectCode) {
-					err = bot.applyToAll(dgs, false, false)
+					err = bot.applyFailSafeVoiceReset(dgs)
 					if err != nil {
 						return command.PrivateErrorResponse(command.End.Name, err, sett)
 					}
@@ -860,6 +869,15 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 
 		switch {
 		// ========= 追加: /link ボタン（起動者 → 対象ユーザー選択） =========
+		case strings.HasPrefix(customID, hostTalkControlIDPrefix+":"):
+			return bot.handleHostTalkComponent(
+				s,
+				i,
+				g,
+				sett,
+				customID,
+			)
+
 		case strings.HasPrefix(customID, linkButtonIDPrefix):
 			// CustomID: "link-game:<starterUserID>:<connectCode>"
 			parts := strings.SplitN(customID, ":", 3)
@@ -1143,7 +1161,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 				// The subscriber performs the normal fail-safe unmute and cleanup.
 				// If its channel is missing, fall back to doing the cleanup here.
 				if !bot.signalEndGame(dgs.ConnectCode) {
-					err = bot.applyToAll(dgs, false, false)
+					err = bot.applyFailSafeVoiceReset(dgs)
 					if err != nil {
 						return command.PrivateErrorResponse(command.End.Name, err, sett)
 					}

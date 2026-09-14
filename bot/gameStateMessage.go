@@ -22,6 +22,10 @@ type GameStateMessage struct {
 	MessageChannelID string `json:"messageChannelID"`
 	LeaderID         string `json:"leaderID"`
 	CreationTimeUnix int64  `json:"creationTimeUnix"`
+
+	HostTalkMode         bool            `json:"hostTalkMode,omitempty"`
+	HostTalkRevision     uint64          `json:"hostTalkRevision,omitempty"`
+	HostTalkManagedUsers map[string]bool `json:"hostTalkManagedUsers,omitempty"`
 }
 
 func MakeGameStateMessage() GameStateMessage {

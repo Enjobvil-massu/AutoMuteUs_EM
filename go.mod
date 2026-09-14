@@ -1,9 +1,10 @@
 module github.com/automuteus/automuteus/v8
 
-go 1.25.0
+go 1.27
 
 require (
 	github.com/BurntSushi/toml v1.1.0
+	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/bsm/redislock v0.7.1
 	github.com/bwmarrin/discordgo v0.27.1
 	github.com/georgysavva/scany/v2 v2.1.4
@@ -19,7 +20,7 @@ require (
 	github.com/swaggo/swag v1.8.10
 	github.com/top-gg/go-dbl v0.0.0-20201116001615-e844586b1159
 	golang.org/x/exp v0.0.0-20230212135524-a684f29349b6
-	golang.org/x/text v0.37.0
+	golang.org/x/text v0.42.0
 )
 
 require (
@@ -39,7 +40,7 @@ require (
 	github.com/go-playground/validator/v10 v10.11.1 // indirect
 	github.com/goccy/go-json v0.9.11 // indirect
 	github.com/golang/protobuf v1.5.0 // indirect
-	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
@@ -58,15 +59,16 @@ require (
 	github.com/prometheus/procfs v0.6.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/ugorji/go/codec v1.2.7 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/otel v0.19.0 // indirect
 	go.opentelemetry.io/otel/metric v0.19.0 // indirect
 	go.opentelemetry.io/otel/trace v0.19.0 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0 // indirect
-	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

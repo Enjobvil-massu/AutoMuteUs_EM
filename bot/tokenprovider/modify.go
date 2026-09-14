@@ -8,6 +8,7 @@ import (
 	"github.com/automuteus/automuteus/v8/pkg/task"
 	"github.com/go-redis/redis/v8"
 	"log"
+	"sync/atomic"
 )
 
 func RecordDiscordRequestsByCounts(client *redis.Client, counts task.MuteDeafenSuccessCounts) {
@@ -17,6 +18,39 @@ func RecordDiscordRequestsByCounts(client *redis.Client, counts task.MuteDeafenS
 	server.RecordDiscordRequests(client, server.InvalidRequest, counts.RateLimit)
 }
 
+// captureRoute is shared by all workers in one ModifyUsers batch.
+// It intentionally does not require CaptureMuteReady yet so EM remains compatible with legacy Galactus.
+type captureRoute struct {
+	guildID     string
+	connectCode string
+	available   bool
+	dead        atomic.Bool
+}
+
+func (tokenProvider *TokenProvider) newCaptureRoute(guildID, connectCode string) *captureRoute {
+	route := &captureRoute{
+		guildID:     guildID,
+		connectCode: connectCode,
+		available:   true,
+	}
+	if tokenProvider.isBlacklisted(guildID, connectCode) {
+		route.available = false
+		log.Printf("Capture client for gamecode %q is blacklisted. Using bot fallback for this batch", connectCode)
+	}
+	return route
+}
+
+func (route *captureRoute) usable() bool {
+	return route != nil && route.available && !route.dead.Load()
+}
+
+// markDead returns true only for the first worker that transitions this batch to dead.
+func (route *captureRoute) markDead() bool {
+	if route == nil {
+		return false
+	}
+	return route.dead.CompareAndSwap(false, true)
+}
 func (tokenProvider *TokenProvider) attemptOnSecondaryTokens(guildID, userID string, tokenSubset map[string]struct{}, request task.UserModify) string {
 	if len(tokenProvider.activeSessions) > 0 {
 		sess, hToken := tokenProvider.getSession(guildID, tokenSubset)
@@ -44,7 +78,14 @@ func (tokenProvider *TokenProvider) attemptOnSecondaryTokens(guildID, userID str
 	return ""
 }
 
-func (tokenProvider *TokenProvider) attemptOnCaptureBot(guildID, connectCode string, gid uint64, request task.UserModify) bool {
+func (tokenProvider *TokenProvider) attemptOnCaptureBot(route *captureRoute, gid uint64, request task.UserModify) bool {
+	if !route.usable() {
+		return false
+	}
+
+	guildID := route.guildID
+	connectCode := route.connectCode
+
 	// this is cheeky, but use the connect code as part of the lock; don't issue too many requests on the capture client w/ this code
 	if tokenProvider.IncrAndTestGuildTokenComboLock(guildID, connectCode) {
 		// if the secondary token didn't work, then next we try the client-side capture request
@@ -87,9 +128,13 @@ func (tokenProvider *TokenProvider) attemptOnCaptureBot(guildID, connectCode str
 				// hooray! we did the mute with a client token!
 				return true
 			}
-			err = tokenProvider.BlacklistTokenForDuration(guildID, connectCode, UnresponsiveCaptureBlacklistDuration)
-			if err == nil {
-				log.Printf("No ack from capture clients; blacklisting capture client for gamecode \"%s\" for %s\n", connectCode, UnresponsiveCaptureBlacklistDuration.String())
+			if route.markDead() {
+				err = tokenProvider.BlacklistTokenForDuration(guildID, connectCode, UnresponsiveCaptureBlacklistDuration)
+				if err == nil {
+					log.Printf("No ack from capture client; marking batch route dead and blacklisting gamecode \"%s\" for %s\n", connectCode, UnresponsiveCaptureBlacklistDuration.String())
+				} else {
+					log.Printf("Unable to persist Capture blacklist for gamecode %q: %v", connectCode, err)
+				}
 			}
 		}
 

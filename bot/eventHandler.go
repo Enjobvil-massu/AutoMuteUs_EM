@@ -40,7 +40,7 @@ func (bot *Bot) failSafeEndGame(dgsRequest GameStateRequest, reason string) {
 	if dgs != nil {
 		var unmuteErr error
 		for attempt := 1; attempt <= 3; attempt++ {
-			unmuteErr = bot.applyToAll(dgs, false, false)
+			unmuteErr = bot.applyFailSafeVoiceReset(dgs)
 			if unmuteErr == nil {
 				break
 			}

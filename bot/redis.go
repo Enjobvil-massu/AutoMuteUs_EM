@@ -173,6 +173,33 @@ func (redisInterface *RedisInterface) GetDiscordGameStateAndLock(gsr GameStateRe
 	return lock, state
 }
 
+// getExistingDiscordGameStateAndLock obtains the normal finite-retry game-state lock,
+// but unlike GetDiscordGameStateAndLock it never creates a missing GameState.
+func (redisInterface *RedisInterface) getExistingDiscordGameStateAndLock(gsr GameStateRequest) (*redislock.Lock, *GameState) {
+	key := redisInterface.getDiscordGameStateKey(gsr)
+	if key == "" {
+		return nil, nil
+	}
+
+	locker := redislock.New(redisInterface.client)
+	lock, err := locker.Obtain(ctx, key+":lock", time.Millisecond*LockTimeoutMs, &redislock.Options{
+		RetryStrategy: redislock.LimitRetry(redislock.LinearBackoff(time.Millisecond*LinearBackoffMs), MaxRetries),
+		Metadata:      "",
+	})
+	if errors.Is(err, redislock.ErrNotObtained) {
+		return nil, nil
+	} else if err != nil {
+		log.Println(err)
+		return nil, nil
+	}
+
+	state := redisInterface.getDiscordGameState(gsr, false)
+	if releaseLockForUnavailableState(state, func() error { return lock.Release(ctx) }) {
+		return nil, nil
+	}
+	return lock, state
+}
+
 func (redisInterface *RedisInterface) getDiscordGameState(gsr GameStateRequest, createOnNil bool) *GameState {
 	key := redisInterface.getDiscordGameStateKey(gsr)
 
@@ -209,6 +236,37 @@ func (redisInterface *RedisInterface) CheckPointer(pointer string) string {
 		return ""
 	}
 	return key
+}
+
+// persistExistingDiscordGameState atomically refreshes the existing state and its pointers.
+// The caller owns the game-state lock and decides when to release it.
+func (redisInterface *RedisInterface) persistExistingDiscordGameState(data *GameState) error {
+	if data == nil {
+		return errors.New("cannot persist nil Discord game state")
+	}
+	if data.GuildID == "" || data.ConnectCode == "" {
+		return errors.New("cannot persist Discord game state without guild ID and connect code")
+	}
+
+	key := rediskey.ConnectCodeData(data.GuildID, data.ConnectCode)
+	jBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	_, err = redisInterface.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, key, jBytes, GameTimeoutSeconds*time.Second)
+		pipe.Set(ctx, rediskey.ConnectCodePtr(data.GuildID, data.ConnectCode), key, GameTimeoutSeconds*time.Second)
+
+		if data.VoiceChannel != "" {
+			pipe.Set(ctx, rediskey.VoiceChannelPtr(data.GuildID, data.VoiceChannel), key, GameTimeoutSeconds*time.Second)
+		}
+		if data.GameStateMsg.MessageChannelID != "" {
+			pipe.Set(ctx, rediskey.TextChannelPtr(data.GuildID, data.GameStateMsg.MessageChannelID), key, GameTimeoutSeconds*time.Second)
+		}
+		return nil
+	})
+	return err
 }
 
 func (redisInterface *RedisInterface) SetDiscordGameState(data *GameState, lock *redislock.Lock) {

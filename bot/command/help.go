@@ -34,6 +34,10 @@ var Help = discordgo.ApplicationCommand{
 					Value: End.Name,
 				},
 				{
+					Name:  HostMute.Name,
+					Value: HostMute.Name,
+				},
+				{
 					Name:  Link.Name,
 					Value: Link.Name,
 				},

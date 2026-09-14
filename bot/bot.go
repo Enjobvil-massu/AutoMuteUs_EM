@@ -91,6 +91,7 @@ func MakeAndStartBot(version, commit, botToken, topGGToken, url, emojiGuildID st
 		captureTimeout:    GameTimeoutSeconds,
 	}
 	dg.LogLevel = discordgo.LogInformational
+	installDiscordgoLogger()
 
 	dg.AddHandler(bot.handleVoiceStateChange)
 	dg.AddHandler(bot.newGuild(emojiGuildID))
@@ -104,6 +105,7 @@ func MakeAndStartBot(version, commit, botToken, topGGToken, url, emojiGuildID st
 	})
 
 	dg.Identify.Intents = discordgo.MakeIntent(discordgo.IntentsGuildVoiceStates | discordgo.IntentsGuilds)
+	configureStateTracking(dg)
 
 	token.WaitForToken(bot.RedisInterface.client, botToken)
 	token.LockForToken(bot.RedisInterface.client, botToken)
@@ -346,6 +348,9 @@ func (bot *Bot) newGuild(emojiGuildID string) func(s *discordgo.Session, m *disc
 }
 
 func (bot *Bot) leaveGuild(_ *discordgo.Session, m *discordgo.GuildDelete) {
+	if m.Unavailable {
+		return
+	} // A temporary Discord outage is not a guild removal.
 	log.Println("Bot was removed from Guild " + m.ID)
 	bot.RedisInterface.LeaveUniqueGuildCounter(m.ID)
 
