@@ -257,8 +257,17 @@ func (bot *Bot) applyFailSafeVoiceReset(dgs *GameState) error {
 	if resetState == nil {
 		return quiesceErr
 	}
+	if quiesceErr != nil {
+		return quiesceErr
+	}
 
 	voiceBarrier, barrierErr := bot.acquireVoiceResetBarrier(resetState.ConnectCode)
+	if barrierErr != nil {
+		return barrierErr
+	}
+	if voiceBarrier == nil {
+		return errors.New("voice reset barrier was not acquired")
+	}
 
 	normalErr := bot.applyToAll(resetState, false, false)
 	hostTalkErr := bot.applyHostTalkManagedVoiceReset(resetState)
