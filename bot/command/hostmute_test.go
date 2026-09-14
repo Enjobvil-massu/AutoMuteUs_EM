@@ -128,14 +128,104 @@ func TestGetHostMuteMode(t *testing.T) {
 	}
 }
 
-func TestHostMuteStageAIsNotRegistered(t *testing.T) {
-	for _, registered := range All {
+func TestHostMuteIsRegisteredAndEnabled(t *testing.T) {
+	allCount := 0
+	allIndex := -1
+
+	for index, registered := range All {
 		if registered != nil && registered.Name == HostMute.Name {
-			t.Fatal("HostMute must not be added to command.All during stage 3C4A")
+			allCount++
+			allIndex = index
 		}
 	}
 
-	if _, exists := EnabledSlashCommands[HostMute.Name]; exists {
-		t.Fatal("hostmute must not be exposed in EnabledSlashCommands during stage 3C4A")
+	if allCount != 1 {
+		t.Fatalf(
+			"HostMute command.All count = %d, want 1",
+			allCount,
+		)
+	}
+
+	if allIndex <= 0 || allIndex >= len(All)-1 {
+		t.Fatalf(
+			"HostMute command.All index = %d, want interior entry",
+			allIndex,
+		)
+	}
+
+	if All[allIndex-1] == nil ||
+		All[allIndex-1].Name != End.Name {
+		t.Fatalf(
+			"command before HostMute = %#v, want End",
+			All[allIndex-1],
+		)
+	}
+
+	if All[allIndex+1] == nil ||
+		All[allIndex+1].Name != Link.Name {
+		t.Fatalf(
+			"command after HostMute = %#v, want Link",
+			All[allIndex+1],
+		)
+	}
+
+	enabled, exists := EnabledSlashCommands[HostMute.Name]
+	if !exists {
+		t.Fatal("hostmute missing from EnabledSlashCommands")
+	}
+	if !enabled {
+		t.Fatal("hostmute is not enabled")
+	}
+
+	enabledCount := 0
+	for _, registered := range EnabledCommands() {
+		if registered != nil && registered.Name == HostMute.Name {
+			enabledCount++
+		}
+	}
+
+	if enabledCount != 1 {
+		t.Fatalf(
+			"EnabledCommands HostMute count = %d, want 1",
+			enabledCount,
+		)
+	}
+}
+
+func TestHostMuteIsInHelpChoices(t *testing.T) {
+	if len(Help.Options) != 1 || Help.Options[0] == nil {
+		t.Fatalf(
+			"unexpected Help option layout: %#v",
+			Help.Options,
+		)
+	}
+
+	option := Help.Options[0]
+
+	if len(option.Choices) > 25 {
+		t.Fatalf(
+			"Help choices = %d, exceeds Discord limit",
+			len(option.Choices),
+		)
+	}
+
+	count := 0
+
+	for _, choice := range option.Choices {
+		if choice == nil {
+			continue
+		}
+
+		if choice.Name == HostMute.Name &&
+			choice.Value == HostMute.Name {
+			count++
+		}
+	}
+
+	if count != 1 {
+		t.Fatalf(
+			"HostMute help choice count = %d, want 1",
+			count,
+		)
 	}
 }
