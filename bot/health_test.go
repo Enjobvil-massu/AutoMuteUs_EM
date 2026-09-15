@@ -40,6 +40,7 @@ func TestGatewayHealth_NotConnected(t *testing.T) {
 func TestGatewayHealth_ConnectedButNotAcked(t *testing.T) {
 	bot := gatewayBot(t)
 	bot.PrimarySession.DataReady = true
+	bot.PrimarySession.LastHeartbeatAck = time.Time{}
 	if err := bot.GatewayHealth(context.Background()); err == nil || !strings.Contains(err.Error(), "not yet acknowledged") {
 		t.Fatalf("err = %v", err)
 	}
