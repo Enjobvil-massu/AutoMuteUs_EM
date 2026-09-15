@@ -215,6 +215,14 @@ func TestHostTalkSelectorComponents(t *testing.T) {
 		t.Fatalf("OFF label = %q", offButton.Label)
 	}
 
+	if onButton.Emoji.Name != "🎙️" {
+		t.Fatalf("ON emoji = %q, want %q", onButton.Emoji.Name, "🎙️")
+	}
+
+	if offButton.Emoji.Name != "🔇" {
+		t.Fatalf("OFF emoji = %q, want %q", offButton.Emoji.Name, "🔇")
+	}
+
 	onControl, ok := parseHostTalkControlID(onButton.CustomID)
 	if !ok || !onControl.RequestedMode {
 		t.Fatalf("invalid ON control: %#v, parsed=%v", onControl, ok)
