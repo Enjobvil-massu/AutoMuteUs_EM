@@ -157,6 +157,9 @@ func hostTalkSelectorComponents(
 					CustomID: offID,
 					Style:    discordgo.DangerButton,
 					Label:    "OFFにする",
+					Emoji: discordgo.ComponentEmoji{
+						Name: "🔇",
+					},
 				},
 			},
 		},
