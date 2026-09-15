@@ -184,7 +184,18 @@ func discordMainWrapper() error {
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	defer signal.Stop(sc)
 
-	go server.StartHealthCheckServer("8080")
+	// LIVENESS_GRACE controls how long continuous readiness failure is tolerated
+	// before /live also fails. Unset or 0 keeps liveness unconditional.
+	var livenessGrace time.Duration
+	if v := os.Getenv("LIVENESS_GRACE"); v != "" {
+		livenessGrace, err = time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid LIVENESS_GRACE %q: %w", v, err)
+		}
+		log.Printf("Read from env; using LIVENESS_GRACE=%s\n", livenessGrace)
+	}
+	health := server.NewHealth(livenessGrace)
+	go server.StartHealthCheckServer("8080", health)
 
 	topGGToken := os.Getenv("TOP_GG_TOKEN")
 	taskTimeoutms := capture.DefaultCaptureBotTimeout
@@ -244,6 +255,14 @@ func discordMainWrapper() error {
 		}
 		tokenProvider.Close()
 	}()
+
+	// Register dependency checks now, but do not mark the process ready until
+	// slash-command registration has also completed below.
+	for i, shard := range shardList {
+		health.AddCheck(fmt.Sprintf("shard-%d", shard), bots[i].GatewayHealth)
+	}
+	health.AddCheck("redis", redisClient.Ping)
+	health.AddCheck("postgres", psql.Pool.Ping)
 
 	go bots[0].StartMetricsServer(os.Getenv("SCW_NODE_ID"))
 	go bots[0].StartAPIServer("5000")
@@ -320,12 +339,13 @@ func discordMainWrapper() error {
 		log.Println("Finishing registering all commands!")
 	}
 
-	// Redis/Postgres/Discord/コマンド登録が完了してからreadyにします。
-	server.GlobalReady = true
+	// Redis/Postgres/Discord/command registration must all be ready before the
+	// health endpoint reports ready. This intentionally preserves EM behavior.
+	health.SetStarted()
 	log.Println("Bot startup checks completed; health endpoint is ready")
 
 	<-sc
-	server.GlobalReady = false
+	health.SetDraining()
 	log.Println("Received shutdown signal. Active games will be unmuted before the Discord session closes.")
 
 	// 通常のDocker更新・再起動ではコマンドを削除しません。
