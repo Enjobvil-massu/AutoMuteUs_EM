@@ -45,28 +45,10 @@ type registeredCommand struct {
 	ApplicationCommand *discordgo.ApplicationCommand
 }
 
-// true: Discordへ登録する / false: 登録せず、既存登録があれば削除する。
-// 表示・操作方法を変えないため、現在利用しているコマンドだけを明示します。
-var EnabledSlashCommands = map[string]bool{
-	"help":     true,
-	"start":    true,
-	"refresh":  false,
-	"pause":    false,
-	"stop":     true,
-	"link":     true,
-	"unlink":   true,
-	"settings": true,
-	"privacy":  false,
-	"info":     false,
-	"map":      false,
-	"stats":    false,
-	"premium":  false,
-	"debug":    false,
-	"download": false,
-}
-
+// isSlashCommandEnabled uses command.EnabledSlashCommands as the single
+// source of truth for Discord slash-command registration and cleanup.
 func isSlashCommandEnabled(name string) bool {
-	enabled, ok := EnabledSlashCommands[name]
+	enabled, ok := command.EnabledSlashCommands[name]
 	return ok && enabled
 }
 
