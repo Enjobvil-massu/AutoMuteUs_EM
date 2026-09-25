@@ -15,6 +15,16 @@ import (
 	"time"
 )
 
+// Explicit read-column lists keep this older EM build compatible with future
+// schema additions. scany rejects result columns that have no matching struct
+// field, so wildcard reads would make a new nullable column break existing reads.
+const (
+	guildColumns     = "guild_id, guild_name, premium, tx_time_unix, transferred_to, inherits_from"
+	userColumns      = "user_id, opt, vote_time_unix"
+	gameColumns      = "game_id, guild_id, connect_code, start_time, win_type, end_time"
+	gameEventColumns = "event_id, user_id, game_id, event_time, event_type, payload"
+)
+
 type PgxIface interface {
 	Begin(context.Context) (pgx.Tx, error)
 	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
@@ -92,7 +102,7 @@ func (psqlInterface *PsqlInterface) GetGuildForDownload(guildID uint64) (*Postgr
 
 func getGuild(conn PgxIface, guildID uint64) (*PostgresGuild, error) {
 	var guilds []*PostgresGuild
-	err := pgxscan.Select(context.Background(), conn, &guilds, "SELECT * FROM guilds WHERE guild_id = $1", guildID)
+	err := pgxscan.Select(context.Background(), conn, &guilds, "SELECT "+guildColumns+" FROM guilds WHERE guild_id = $1", guildID)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +194,7 @@ func getUserByString(conn PgxIface, userID string) (*PostgresUser, error) {
 
 func getUser(conn PgxIface, userID uint64) (*PostgresUser, error) {
 	var users []*PostgresUser
-	err := pgxscan.Select(context.Background(), conn, &users, "SELECT * FROM users WHERE user_id = $1", userID)
+	err := pgxscan.Select(context.Background(), conn, &users, "SELECT "+userColumns+" FROM users WHERE user_id = $1", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +207,7 @@ func getUser(conn PgxIface, userID uint64) (*PostgresUser, error) {
 
 func (psqlInterface *PsqlInterface) GetGame(guildID, connectCode, matchID string) (*PostgresGame, error) {
 	var games []*PostgresGame
-	err := pgxscan.Select(context.Background(), psqlInterface.Pool, &games, "SELECT * FROM games WHERE guild_id = $1 AND game_id = $2 AND connect_code = $3;", guildID, matchID, connectCode)
+	err := pgxscan.Select(context.Background(), psqlInterface.Pool, &games, "SELECT "+gameColumns+" FROM games WHERE guild_id = $1 AND game_id = $2 AND connect_code = $3;", guildID, matchID, connectCode)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +219,7 @@ func (psqlInterface *PsqlInterface) GetGame(guildID, connectCode, matchID string
 
 func (psqlInterface *PsqlInterface) GetGameEvents(matchID string) ([]*PostgresGameEvent, error) {
 	var events []*PostgresGameEvent
-	err := pgxscan.Select(context.Background(), psqlInterface.Pool, &events, "SELECT * FROM game_events WHERE game_id = $1 ORDER BY event_id ASC;", matchID)
+	err := pgxscan.Select(context.Background(), psqlInterface.Pool, &events, "SELECT "+gameEventColumns+" FROM game_events WHERE game_id = $1 ORDER BY event_id ASC;", matchID)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +422,7 @@ func (psqlInterface *PsqlInterface) GetGamesForGuild(guildID uint64) ([]*Postgre
 
 func getGamesForGuild(conn PgxIface, guildID uint64) ([]*PostgresGame, error) {
 	var games []*PostgresGame
-	err := pgxscan.Select(context.Background(), conn, &games, "SELECT * FROM games WHERE guild_id = $1;", guildID)
+	err := pgxscan.Select(context.Background(), conn, &games, "SELECT "+gameColumns+" FROM games WHERE guild_id = $1;", guildID)
 	if err != nil {
 		return nil, err
 	}
