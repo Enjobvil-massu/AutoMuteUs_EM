@@ -26,10 +26,12 @@ import (
 )
 
 type Bot struct {
-	version  string
-	commit   string
-	official bool
-	url      string
+	version    string
+	botToken   string
+	topGGToken string
+	commit     string
+	official   bool
+	url        string
 
 	// mapping of socket connections to the game connect codes
 	ConnsToGames map[string]string
@@ -58,9 +60,10 @@ type Bot struct {
 	captureTimeout int
 }
 
-// MakeAndStartBot does what it sounds like
-// TODO collapse these fields into proper structs?
-func MakeAndStartBot(version, commit, botToken, topGGToken, url, emojiGuildID string, numShards, shardID int, redisInterface *RedisInterface, storageInterface *storage.StorageInterface, psql *storageutils.PsqlInterface, logPath string) *Bot {
+// MakeBot builds one shard's Bot and configures its Discord session without
+// connecting it. The TokenProvider must be wired before Start opens the
+// gateway, because Discord events can arrive immediately after identification.
+func MakeBot(version, commit, botToken, topGGToken, url, emojiGuildID string, numShards, shardID int, redisInterface *RedisInterface, storageInterface *storage.StorageInterface, psql *storageutils.PsqlInterface, logPath string) *Bot {
 	dg, err := discordgo.New("Bot " + botToken)
 	if err != nil {
 		log.Println("error creating Discord session,", err)
@@ -75,6 +78,8 @@ func MakeAndStartBot(version, commit, botToken, topGGToken, url, emojiGuildID st
 
 	bot := Bot{
 		version:      version,
+		botToken:     botToken,
+		topGGToken:   topGGToken,
 		commit:       commit,
 		official:     os.Getenv("AUTOMUTEUS_OFFICIAL") != "",
 		url:          url,
@@ -107,13 +112,31 @@ func MakeAndStartBot(version, commit, botToken, topGGToken, url, emojiGuildID st
 	dg.Identify.Intents = discordgo.MakeIntent(discordgo.IntentsGuildVoiceStates | discordgo.IntentsGuilds)
 	configureStateTracking(dg)
 
-	token.WaitForToken(bot.RedisInterface.client, botToken)
-	token.LockForToken(bot.RedisInterface.client, botToken)
+	return &bot
+}
+
+// Start opens the configured Discord shard only after every runtime dependency
+// needed by event handlers is present.
+func (bot *Bot) Start() error {
+	if bot == nil {
+		return errors.New("cannot start a nil bot")
+	}
+	if bot.TokenProvider == nil {
+		return errors.New("bot started without a TokenProvider")
+	}
+	if bot.PrimarySession == nil {
+		return errors.New("bot started without a Discord session")
+	}
+	if bot.RedisInterface == nil || bot.RedisInterface.client == nil {
+		return errors.New("bot started without Redis")
+	}
+
+	token.WaitForToken(bot.RedisInterface.client, bot.botToken)
+	token.LockForToken(bot.RedisInterface.client, bot.botToken)
+
 	// Open a websocket connection to Discord and begin listening.
-	err = dg.Open()
-	if err != nil {
-		log.Println("Could not connect Bot to the Discord Servers with error:", err)
-		return nil
+	if err := bot.PrimarySession.Open(); err != nil {
+		return fmt.Errorf("could not connect bot to the Discord servers: %w", err)
 	}
 
 	log.Println("Finished identifying to the Discord API. Now ready for incoming events")
@@ -140,12 +163,12 @@ func MakeAndStartBot(version, commit, botToken, topGGToken, url, emojiGuildID st
 		Status: "online", // online / idle / dnd / invisible / "" でも可
 	}
 
-	if err := dg.UpdateStatusComplex(status); err != nil {
+	if err := bot.PrimarySession.UpdateStatusComplex(status); err != nil {
 		log.Println("failed to set playing status:", err)
 	}
 
-	if topGGToken != "" {
-		dblClient, err := dbl.NewClient(topGGToken)
+	if bot.topGGToken != "" {
+		dblClient, err := dbl.NewClient(bot.topGGToken)
 		if err != nil {
 			log.Println("Error creating Top.gg client: ", err)
 		}
@@ -154,7 +177,7 @@ func MakeAndStartBot(version, commit, botToken, topGGToken, url, emojiGuildID st
 		log.Println("No TOP_GG_TOKEN provided")
 	}
 
-	return &bot
+	return nil
 }
 
 func (bot *Bot) InitTokenProvider(tp *tokenprovider.TokenProvider) {
