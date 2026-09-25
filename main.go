@@ -218,7 +218,7 @@ func discordMainWrapper() error {
 
 	bots := make([]*bot.Bot, len(shardList))
 	for i, shard := range shardList {
-		bots[i] = bot.MakeAndStartBot(
+		bots[i] = bot.MakeBot(
 			version,
 			commit,
 			discordToken,
@@ -233,19 +233,29 @@ func discordMainWrapper() error {
 			logPath,
 		)
 		if bots[i] == nil {
+			return fmt.Errorf("bot %d failed to initialize; check the Discord bot token", shard)
+		}
+	}
+
+	// Wire the shared voice provider before any shard connects to Discord.
+	// Gateway events can arrive immediately after identification, and those
+	// handlers must never observe a nil TokenProvider.
+	bots[0].InitTokenProvider(tokenProvider)
+	for i := range shardList {
+		bots[i].TokenProvider = tokenProvider
+	}
+
+	for i, shard := range shardList {
+		if err := bots[i].Start(); err != nil {
 			for _, startedBot := range bots[:i] {
 				if startedBot != nil {
 					startedBot.Close()
 				}
 			}
-			return fmt.Errorf("bot %d failed to initialize; check the Discord bot token and Discord connection", shard)
+			return fmt.Errorf("bot %d failed to start: %w", shard, err)
 		}
 	}
 
-	bots[0].InitTokenProvider(tokenProvider)
-	for i := range shardList {
-		bots[i].TokenProvider = tokenProvider
-	}
 	tokenProvider.PopulateAndStartSessions(extraTokens)
 	defer func() {
 		for _, runningBot := range bots {
