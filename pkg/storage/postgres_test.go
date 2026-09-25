@@ -1,10 +1,13 @@
 package storage
 
 import (
-	"github.com/automuteus/automuteus/v8/pkg/premium"
-	"github.com/pashagolub/pgxmock/v5"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/automuteus/automuteus/v8/pkg/premium"
+	"github.com/pashagolub/pgxmock/v5"
 )
 
 const (
@@ -13,6 +16,39 @@ const (
 	GuildID           = "234234234234234234"
 	GuildIDInt uint64 = 234234234234234234
 )
+
+func TestReadColumnListsMatchStorageStructs(t *testing.T) {
+	tests := []struct {
+		name    string
+		columns string
+		typ     reflect.Type
+	}{
+		{name: "guilds", columns: guildColumns, typ: reflect.TypeOf(PostgresGuild{})},
+		{name: "users", columns: userColumns, typ: reflect.TypeOf(PostgresUser{})},
+		{name: "games", columns: gameColumns, typ: reflect.TypeOf(PostgresGame{})},
+		{name: "game_events", columns: gameEventColumns, typ: reflect.TypeOf(PostgresGameEvent{})},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expected := make([]string, 0, tt.typ.NumField())
+			for i := 0; i < tt.typ.NumField(); i++ {
+				column := tt.typ.Field(i).Tag.Get("db")
+				if column == "" {
+					t.Fatalf("field %s has no db tag", tt.typ.Field(i).Name)
+				}
+				expected = append(expected, column)
+			}
+
+			if got, want := tt.columns, strings.Join(expected, ", "); got != want {
+				t.Fatalf("column list = %q, want %q", got, want)
+			}
+			if strings.Contains(tt.columns, "*") {
+				t.Fatalf("column list must be explicit: %q", tt.columns)
+			}
+		})
+	}
+}
 
 func TestIsUserPremium_nilTopGG(t *testing.T) {
 	mock, err := pgxmock.NewConn()
