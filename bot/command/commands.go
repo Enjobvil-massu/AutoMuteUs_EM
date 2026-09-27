@@ -36,6 +36,8 @@ var All = []*discordgo.ApplicationCommand{
 	&Premium,
 	&Debug,
 	&Download,
+	&Restart,
+	&RestartAll,
 }
 
 // ===== スラッシュコマンド有効・無効設定 =====
@@ -59,6 +61,8 @@ var EnabledSlashCommands = map[string]bool{
 	"premium":  false,
 	"debug":    false,
 	"download": false,
+	"restart": true,
+	"restart-all": true,
 }
 
 // EnabledCommands は EnabledSlashCommands で true のコマンドだけを返します。
