@@ -8,7 +8,7 @@ var Restart = discordgo.ApplicationCommand{
 	Name:                     "restart",
 	Description:              "AutoMuteUsを再起動します（管理者専用）",
 	DefaultMemberPermissions: &administratorPermission,
-	DMPermission:              boolPtr(false),
+	DMPermission:             boolPtr(false),
 }
 
 var RestartAll = discordgo.ApplicationCommand{
