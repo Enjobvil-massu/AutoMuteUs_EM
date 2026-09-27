@@ -43,7 +43,7 @@ func (bot *Bot) requestRestart(i *discordgo.InteractionCreate, mode string) *dis
 
 	payload, err := json.Marshal(restartControllerRequest{
 		Mode:             mode,
-		ApplicationID:    i.ApplicationID,
+		ApplicationID:    i.AppID,
 		InteractionToken: i.Token,
 	})
 	if err != nil {
