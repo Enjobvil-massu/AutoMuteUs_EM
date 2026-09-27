@@ -15,7 +15,7 @@ var RestartAll = discordgo.ApplicationCommand{
 	Name:                     "restart-all",
 	Description:              "AutoMuteUsシステム全体を再起動します（管理者専用）",
 	DefaultMemberPermissions: &administratorPermission,
-	DMPermission:              boolPtr(false),
+	DMPermission:             boolPtr(false),
 }
 
 func boolPtr(v bool) *bool { return &v }
