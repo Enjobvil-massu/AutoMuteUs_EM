@@ -60,8 +60,8 @@ var EnabledSlashCommands = map[string]bool{
 	"stats":    false,
 	"premium":  false,
 	"debug":    false,
-	"download": false,
-	"restart": true,
+	"download":    false,
+	"restart":     true,
 	"restart-all": true,
 }
 
