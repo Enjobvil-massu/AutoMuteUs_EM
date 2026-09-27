@@ -14,8 +14,8 @@ import (
 )
 
 type restartControllerRequest struct {
-	Mode              string `json:"mode"`
-	ApplicationID     string `json:"application_id"`
+	Mode             string `json:"mode"`
+	ApplicationID    string `json:"application_id"`
 	InteractionToken string `json:"interaction_token"`
 }
 
