@@ -96,14 +96,25 @@ func performRestart(mode string) error {
 	project, err := composeProject()
 	if err != nil { return err }
 	services := map[string]string{}
-	for _, name := range []string{"automuteus","galactus","redis","postgres"} {
+	required := []string{"automuteus"}
+	if mode == "all" {
+		required = []string{"automuteus", "galactus", "redis", "postgres"}
+	}
+	for _, name := range required {
 		id, e := serviceContainer(project, name)
-		if e != nil { return e }
+		if e != nil {
+			return e
+		}
 		services[name] = id
 	}
 	if mode == "bot" {
-		if err := dockerPost("/containers/"+services["automuteus"]+"/restart?t=20"); err != nil { return err }
-		return waitRunning(services["automuteus"], 90*time.Second)
+		if err := dockerPost("/containers/" + services["automuteus"] + "/restart?t=20"); err != nil {
+			return err
+		}
+		if err := waitRunning(services["automuteus"], 90*time.Second); err != nil {
+			return err
+		}
+		return waitAutoMuteUsReady(120 * time.Second)
 	}
 	if err := dockerPost("/containers/"+services["automuteus"]+"/stop?t=20"); err != nil { return fmt.Errorf("stop automuteus: %w", err) }
 	if err := dockerPost("/containers/"+services["galactus"]+"/stop?t=15"); err != nil { return fmt.Errorf("stop galactus: %w", err) }
@@ -115,7 +126,9 @@ func performRestart(mode string) error {
 	if err := waitRunning(services["galactus"], 60*time.Second); err != nil { return fmt.Errorf("galactus: %w", err) }
 	time.Sleep(3*time.Second)
 	if err := dockerPost("/containers/"+services["automuteus"]+"/start"); err != nil { return fmt.Errorf("start automuteus: %w", err) }
-	return waitRunning(services["automuteus"], 90*time.Second)
+	if err := waitRunning(services["automuteus"], 90*time.Second); err != nil { return fmt.Errorf("automuteus: %w", err) }
+	if err := waitAutoMuteUsReady(120 * time.Second); err != nil { return fmt.Errorf("automuteus: %w", err) }
+	return nil
 }
 
 func composeProject() (string, error) {
@@ -157,6 +170,23 @@ func waitRunning(id string, timeout time.Duration) error {
 		time.Sleep(2*time.Second)
 	}
 	return fmt.Errorf("running timeout")
+}
+
+func waitAutoMuteUsReady(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 5 * time.Second}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get("http://automuteus:8080/ready")
+		if err == nil {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && strings.HasPrefix(string(body), "ready") {
+				return nil
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("readiness timeout")
 }
 
 func dockerGetJSON(path string, out any) error {
