@@ -405,6 +405,12 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 		}
 		redis_common.MarkUserRateLimit(bot.RedisInterface.client, i.Member.User.ID, i.ApplicationCommandData().Name, cmdRatelimitTimeout)
 		switch i.ApplicationCommandData().Name {
+		case command.Restart.Name:
+			return bot.requestRestart(i, "bot")
+
+		case command.RestartAll.Name:
+			return bot.requestRestart(i, "all")
+
 		case command.Help.Name:
 			return command.HelpResponse(sett, i.ApplicationCommandData().Options)
 
