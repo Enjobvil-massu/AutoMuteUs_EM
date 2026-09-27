@@ -57,9 +57,9 @@ var EnabledSlashCommands = map[string]bool{
 	"info":     false,
 	"map":      false,
 	// ↓ たぶん不要そうなものはデフォルトで off
-	"stats":    false,
-	"premium":  false,
-	"debug":    false,
+	"stats":       false,
+	"premium":     false,
+	"debug":       false,
 	"download":    false,
 	"restart":     true,
 	"restart-all": true,
