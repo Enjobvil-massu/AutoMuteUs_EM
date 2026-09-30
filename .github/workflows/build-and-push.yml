@@ -57,6 +57,13 @@ jobs:
       - name: Run all Go tests
         run: go test ./...
 
+      # Security audit only: does not change runtime behavior or user-facing output.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run Go vulnerability audit
+        run: govulncheck ./...
+
       - name: Verify Docker image builds
         run: docker build --pull --tag automuteus-em:verify .
 
