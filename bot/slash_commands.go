@@ -903,7 +903,8 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			if starterID != "" && i.Member != nil && i.Member.User != nil && i.Member.User.ID != starterID {
 				msg := sett.LocalizeMessage(&i18n.Message{
 					ID:    "commands.link.onlyStarter",
-					Other: "このボタンは /start（ゲーム開始）を実行した起動者のみ押せます。",				})
+					Other: "このボタンは /start（ゲーム開始）を実行した起動者のみ押せます。",
+				})
 				return command.PrivateResponse(msg)
 			}
 
@@ -1352,7 +1353,8 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 							Other: "ファイルを作成しました。",
 						}),
 						Components: []discordgo.MessageComponent{},
-						Files: []*discordgo.File{							{
+						Files: []*discordgo.File{
+							{
 								Name:        "guilds.csv",
 								ContentType: "text/csv",
 								Reader:      strings.NewReader(guild.ToCSV()),
