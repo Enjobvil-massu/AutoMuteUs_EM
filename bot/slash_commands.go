@@ -397,7 +397,8 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 		if redis_common.IsUserRateLimitedSpecific(bot.RedisInterface.client, i.Member.User.ID, i.ApplicationCommandData().Name) {
 			banned := redis_common.IncrementRateLimitExceed(bot.RedisInterface.client, i.Member.User.ID)
 			return softbanResponse(banned, sett)
-		}		var cmdRatelimitTimeout = redis_common.GlobalUserRateLimitDuration
+		}
+		var cmdRatelimitTimeout = redis_common.GlobalUserRateLimitDuration
 		// /new has a longer ratelimit window than other commands (it's an expensive operation)
 		if i.ApplicationCommandData().Name == command.New.Name {
 			cmdRatelimitTimeout = redis_common.NewGameRateLimitDuration
@@ -1196,7 +1197,8 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 
 			lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(gsr, 5)
 			if lock == nil {
-				log.Printf("No lock could be obtained when linking for guild %s, channel %s\n", i.GuildID, i.ChannelID)				return command.DeadlockGameStateResponse(command.Link.Name, sett)
+				log.Printf("No lock could be obtained when linking for guild %s, channel %s\n", i.GuildID, i.ChannelID)
+				return command.DeadlockGameStateResponse(command.Link.Name, sett)
 			}
 			if dgs == nil {
 				bot.RedisInterface.SetDiscordGameState(nil, lock)
