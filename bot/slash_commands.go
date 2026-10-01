@@ -397,8 +397,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 		if redis_common.IsUserRateLimitedSpecific(bot.RedisInterface.client, i.Member.User.ID, i.ApplicationCommandData().Name) {
 			banned := redis_common.IncrementRateLimitExceed(bot.RedisInterface.client, i.Member.User.ID)
 			return softbanResponse(banned, sett)
-		}
-		var cmdRatelimitTimeout = redis_common.GlobalUserRateLimitDuration
+		}		var cmdRatelimitTimeout = redis_common.GlobalUserRateLimitDuration
 		// /new has a longer ratelimit window than other commands (it's an expensive operation)
 		if i.ApplicationCommandData().Name == command.New.Name {
 			cmdRatelimitTimeout = redis_common.NewGameRateLimitDuration
@@ -447,7 +446,8 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 		case command.Unlink.Name:
 			if !isPermissioned {
 				return command.InsufficientPermissionsResponse(sett)
-			}			userID := command.GetUnlinkParams(s, i.ApplicationCommandData().Options)
+			}
+			userID := command.GetUnlinkParams(s, i.ApplicationCommandData().Options)
 
 			lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
 			if lock == nil {
@@ -797,8 +797,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			}
 
 		case command.Download.Name:
-			if !isAdmin {
-				return command.InsufficientPermissionsResponse(sett)
+			if !isAdmin {				return command.InsufficientPermissionsResponse(sett)
 			}
 			// don't send the userid because downloading is restricted to Gold members
 			premStatus, days, err := bot.PostgresInterface.GetGuildOrUserPremiumStatus(bot.official, bot.TopGGClient, i.GuildID, "")
@@ -1197,8 +1196,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 
 			lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLockRetries(gsr, 5)
 			if lock == nil {
-				log.Printf("No lock could be obtained when linking for guild %s, channel %s\n", i.GuildID, i.ChannelID)
-				return command.DeadlockGameStateResponse(command.Link.Name, sett)
+				log.Printf("No lock could be obtained when linking for guild %s, channel %s\n", i.GuildID, i.ChannelID)				return command.DeadlockGameStateResponse(command.Link.Name, sett)
 			}
 			if dgs == nil {
 				bot.RedisInterface.SetDiscordGameState(nil, lock)
