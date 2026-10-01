@@ -406,10 +406,10 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 		redis_common.MarkUserRateLimit(bot.RedisInterface.client, i.Member.User.ID, i.ApplicationCommandData().Name, cmdRatelimitTimeout)
 		switch i.ApplicationCommandData().Name {
 		case command.Restart.Name:
-			return bot.requestRestart(i, "bot")
+			return bot.requestRestart(i, "bot", false)
 
 		case command.RestartAll.Name:
-			return bot.requestRestart(i, "all")
+			return bot.requestRestart(i, "all", false)
 
 		case command.Help.Name:
 			return command.HelpResponse(sett, i.ApplicationCommandData().Options)
@@ -447,8 +447,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 		case command.Unlink.Name:
 			if !isPermissioned {
 				return command.InsufficientPermissionsResponse(sett)
-			}
-			userID := command.GetUnlinkParams(s, i.ApplicationCommandData().Options)
+			}			userID := command.GetUnlinkParams(s, i.ApplicationCommandData().Options)
 
 			lock, dgs := bot.RedisInterface.GetDiscordGameStateAndLock(gsr)
 			if lock == nil {
@@ -874,6 +873,12 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 		customID := i.MessageComponentData().CustomID
 
 		switch {
+		case strings.HasPrefix(customID, restartConfirmIDPrefix+":"):
+			return bot.handleRestartConfirmation(i, customID)
+
+		case strings.HasPrefix(customID, restartCancelIDPrefix+":"):
+			return restartCancelResponse(i, customID)
+
 		// ========= 追加: /link ボタン（起動者 → 対象ユーザー選択） =========
 		case strings.HasPrefix(customID, hostTalkControlIDPrefix+":"):
 			return bot.handleHostTalkComponent(
@@ -897,8 +902,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			if starterID != "" && i.Member != nil && i.Member.User != nil && i.Member.User.ID != starterID {
 				msg := sett.LocalizeMessage(&i18n.Message{
 					ID:    "commands.link.onlyStarter",
-					Other: "このボタンは /start（ゲーム開始）を実行した起動者のみ押せます。",
-				})
+					Other: "このボタンは /start（ゲーム開始）を実行した起動者のみ押せます。",				})
 				return command.PrivateResponse(msg)
 			}
 
@@ -1347,8 +1351,7 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 							Other: "ファイルを作成しました。",
 						}),
 						Components: []discordgo.MessageComponent{},
-						Files: []*discordgo.File{
-							{
+						Files: []*discordgo.File{							{
 								Name:        "guilds.csv",
 								ContentType: "text/csv",
 								Reader:      strings.NewReader(guild.ToCSV()),
