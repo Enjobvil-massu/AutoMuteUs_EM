@@ -798,7 +798,8 @@ func (bot *Bot) slashCommandHandler(s *discordgo.Session, i *discordgo.Interacti
 			}
 
 		case command.Download.Name:
-			if !isAdmin {				return command.InsufficientPermissionsResponse(sett)
+			if !isAdmin {
+				return command.InsufficientPermissionsResponse(sett)
 			}
 			// don't send the userid because downloading is restricted to Gold members
 			premStatus, days, err := bot.PostgresInterface.GetGuildOrUserPremiumStatus(bot.official, bot.TopGGClient, i.GuildID, "")
